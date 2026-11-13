@@ -1,6 +1,6 @@
 # Court Supply — Futsal Gear Store
 
-A local e-commerce starter using Python/FastAPI, SQLite, and React/Vite. Includes six seeded products, category filters, search, a persistent browser cart, and a demo checkout. Prices use MYR and integer cents. Orders persist in SQLite; stock checks and order writes share a transaction.
+A local e-commerce starter using Python/FastAPI and React/Vite. PostgreSQL schema migrations define the planned product catalog, size/colour variants, per-variant inventory, role-based users, orders, and audit history. The current API implementation is still the original SQLite demo; the migrations establish the PostgreSQL schema but do not switch the API to it.
 
 ## Requirements
 
@@ -18,6 +18,25 @@ cd backend
 ```
 
 API: http://127.0.0.1:8000/api/products · Interactive docs: http://127.0.0.1:8000/docs
+
+## PostgreSQL schema migrations
+
+The Alembic migration is under `backend/migrations`. Create a PostgreSQL database, set `DATABASE_URL` to a `postgresql+psycopg://...` connection string (see `backend/.env.example`), then from `backend/` run:
+
+```sh
+.venv/bin/python -m pip install -r requirements.txt
+.venv/bin/alembic upgrade head
+```
+
+To roll back the initial schema:
+
+```sh
+.venv/bin/alembic downgrade base
+```
+
+The initial migration creates role, user, category, brand, product, product variant, inventory, order, order item, order status history, and inventory movement tables. It seeds the `customer`, `manager`, and `administrator` roles. Inventory is one-to-one with a product variant, so every size/colour/SKU combination has its own stock row. For checkout, the API must lock or conditionally update the inventory row and insert the order, order items, and inventory movement records in the same PostgreSQL transaction; this migration defines the data model but does not implement that API behavior.
+
+If you prefer pgAdmin, open `backend/migrations/sql/0001_initial_erd.sql` in the Query Tool while connected to `futsal_gear_store` and execute it. Use either the SQL file or Alembic on an empty database, not both. This creates the schema and role rows; it does not import old SQLite products because that catalog has no brand, SKU, size, or colour data to fill the new required fields.
 
 ## Frontend
 
@@ -45,7 +64,7 @@ npm run build
 
 ## Configuration and deployment
 
-The backend reads `DATABASE_PATH` (default `store.db` in its working directory) and `CORS_ORIGINS` (comma-separated allowed frontend origins) from the process environment. `.env.example` files document configuration; the backend does not automatically load `.env` files. SQLite is created and seeded on startup.
+The current demo API reads `DATABASE_PATH` (default `store.db` in its working directory) and `CORS_ORIGINS` from the process environment. Alembic reads `DATABASE_URL` for PostgreSQL migrations. `.env.example` files document configuration; the backend does not automatically load `.env` files. The current API still creates and seeds its SQLite database on startup.
 
 The frontend accepts `VITE_API_URL` for a separately hosted backend; set it before building. The Vite proxy is for development only. Serve `frontend/dist` with a static host and deploy FastAPI separately, or configure your production reverse proxy to forward `/api` to FastAPI. Use persistent storage for the SQLite database.
 
