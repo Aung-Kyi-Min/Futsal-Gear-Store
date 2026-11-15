@@ -84,6 +84,20 @@ Keep the same secret across restarts if you want previously issued tokens to rem
 
 Registering the same email again returns `409 Conflict`, regardless of letter case. An incorrect password or a missing or expired bearer token returns `401 Unauthorized`. Invalid registration input returns `422 Unprocessable Entity`.
 
+## Test role permissions with Postman
+
+Sign in, then send `GET http://127.0.0.1:8000/api/admin/me` with your access token under **Authorization → Bearer Token**. A `customer` receives `403 Forbidden`, while a `manager` or `administrator` receives `200 OK`. A missing or invalid token returns `401 Unauthorized`. All three roles can use `GET /api/auth/me`.
+
+Public registration creates customers. To test a staff role, register a separate account such as `staff-test@example.com`, then run this in pgAdmin against your local test database:
+
+```sql
+UPDATE users
+SET role_id = (SELECT role_id FROM roles WHERE role_name = 'manager')
+WHERE email = 'staff-test@example.com';
+```
+
+Use `administrator` to test that role or `customer` to restore the account. The API reads the current role from PostgreSQL on each protected request, so you can reuse an unexpired token after changing the role.
+
 ## Frontend
 
 In another terminal, from the project root:

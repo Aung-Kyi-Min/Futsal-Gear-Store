@@ -1,7 +1,7 @@
 import os
 from datetime import datetime, timedelta, timezone
 from functools import lru_cache
-from typing import Annotated
+from typing import Annotated, Callable, Literal
 from uuid import UUID
 
 import jwt
@@ -58,11 +58,14 @@ class RegisterRequest(LoginRequest):
     password: SecretStr = Field(min_length=12, max_length=128)
 
 
+Role = Literal["customer", "manager", "administrator"]
+
+
 class PublicUser(BaseModel):
     user_id: UUID
     full_name: str
     email: str
-    role: str
+    role: Role
 
 
 class LoginResponse(BaseModel):
@@ -182,6 +185,18 @@ def get_current_user(
     return PublicUser.model_validate(user)
 
 
+CurrentUser = Annotated[PublicUser, Depends(get_current_user)]
+
+
+def require_roles(*allowed_roles: Role) -> Callable[[PublicUser], PublicUser]:
+    def check_role(user: CurrentUser) -> PublicUser:
+        if user.role not in allowed_roles:
+            raise HTTPException(403, "Your role does not have permission to access this resource")
+        return user
+
+    return check_role
+
+
 @router.get("/me", response_model=PublicUser)
-def me(user: Annotated[PublicUser, Depends(get_current_user)]):
+def me(user: CurrentUser):
     return user

@@ -9,6 +9,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
+from .admin import router as admin_router
 from .auth import router as auth_router
 
 DB_PATH = Path(os.getenv("DATABASE_PATH", "store.db"))
@@ -125,6 +126,7 @@ app.add_middleware(
     allow_methods=["GET", "POST"], allow_headers=["Content-Type", "Authorization"],
 )
 app.include_router(auth_router)
+app.include_router(admin_router)
 
 
 class OrderItem(BaseModel):
