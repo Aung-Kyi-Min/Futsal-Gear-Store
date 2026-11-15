@@ -16,6 +16,8 @@ from pydantic import BaseModel, ConfigDict, EmailStr, Field, SecretStr, StringCo
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Connection
 
+from . import config  # Load backend/.env before resolving authentication settings.
+
 TOKEN_LIFETIME = timedelta(hours=1)
 TOKEN_ISSUER = "futsal-gear-store"
 PASSWORD_HASHER = PasswordHasher()
