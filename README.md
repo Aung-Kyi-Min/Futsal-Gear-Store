@@ -38,6 +38,7 @@ The initial migration creates role, user, category, brand, product, product vari
 
 If you prefer pgAdmin, open `backend/migrations/sql/0001_initial_erd.sql` in the Query Tool while connected to `futsal_gear_store` and execute it. Use either the SQL file or Alembic on an empty database, not both. This creates the schema and role rows; it does not import old SQLite products because that catalog has no brand, SKU, size, or colour data to fill the new required fields.
 
+<<<<<<< HEAD
 ## PostgreSQL sample data
 
 After creating the PostgreSQL schema, open `backend/migrations/sql/0002_sample_data.sql` in pgAdmin's Query Tool on the same database and execute the entire file. It adds 8 fictional users, 10 products, 28 size/colour variants, current inventory, and 8 orders with matching items, stock movements, and status histories. Prices are illustrative MYR values stored in sen. There are out-of-stock and low-stock examples, an inactive customer, and orders in every supported status.
@@ -61,6 +62,8 @@ JOIN inventory i ON i.variant_id = v.variant_id
 ORDER BY p.name, v.size;
 ```
 
+=======
+>>>>>>> b08705aa25e736da515f2b37704c537e731576cf
 ## Test authentication with Postman
 
 Start PostgreSQL and set up the schema as described above. From `backend/`, start FastAPI with the same PostgreSQL database. Use your PostgreSQL username, password, and port in `DATABASE_URL`.
