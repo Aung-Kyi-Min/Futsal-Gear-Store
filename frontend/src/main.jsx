@@ -49,7 +49,7 @@ function App() {
   }
   async function load() {
     setLoading(true); setError('');
-    try { const data = await request('/api/products'); setProducts(data.products); }
+    try { const data = await request('/api/demo/products'); setProducts(data.products); }
     catch { setError('The store could not connect. Check that the Python backend is running, then retry.'); }
     finally { setLoading(false); }
   }

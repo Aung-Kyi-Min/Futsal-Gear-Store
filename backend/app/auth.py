@@ -1,7 +1,6 @@
 import os
 from datetime import datetime, timedelta, timezone
-from functools import lru_cache
-from typing import Annotated
+from typing import Annotated, Callable, Literal
 from uuid import UUID
 
 import jwt
@@ -13,10 +12,10 @@ from fastapi.responses import JSONResponse
 from fastapi.routing import APIRoute
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, SecretStr, StringConstraints
-from sqlalchemy import create_engine, text
+from sqlalchemy import text
 from sqlalchemy.engine import Connection
 
-from . import config  # Load backend/.env before resolving authentication settings.
+from .db import postgres_engine
 
 TOKEN_LIFETIME = timedelta(hours=1)
 TOKEN_ISSUER = "futsal-gear-store"
@@ -60,22 +59,20 @@ class RegisterRequest(LoginRequest):
     password: SecretStr = Field(min_length=12, max_length=128)
 
 
+Role = Literal["customer", "manager", "administrator"]
+
+
 class PublicUser(BaseModel):
     user_id: UUID
     full_name: str
     email: str
-    role: str
+    role: Role
 
 
 class LoginResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"
     user: PublicUser
-
-
-@lru_cache(maxsize=1)
-def postgres_engine(database_url: str):
-    return create_engine(database_url, pool_pre_ping=True, hide_parameters=True)
 
 
 def get_auth_db():
@@ -184,6 +181,22 @@ def get_current_user(
     return PublicUser.model_validate(user)
 
 
+CurrentUser = Annotated[PublicUser, Depends(get_current_user)]
+
+
+def require_roles(*allowed_roles: Role) -> Callable[[PublicUser], PublicUser]:
+    def check_role(user: CurrentUser) -> PublicUser:
+        if user.role not in allowed_roles:
+            raise HTTPException(403, "Your role does not have permission to access this resource")
+        return user
+
+    return check_role
+
+
+require_staff = require_roles("manager", "administrator")
+StaffUser = Annotated[PublicUser, Depends(require_staff)]
+
+
 @router.get("/me", response_model=PublicUser)
-def me(user: Annotated[PublicUser, Depends(get_current_user)]):
+def me(user: CurrentUser):
     return user

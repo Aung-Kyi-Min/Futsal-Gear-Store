@@ -1,0 +1,9 @@
+$kind: http-request
+name: api/admin/me
+url: http://127.0.0.1:8000/api/admin/me
+method: GET
+auth:
+  type: bearer
+  credentials:
+    token: "{{json_web_token_087h}}"
+order: 3000

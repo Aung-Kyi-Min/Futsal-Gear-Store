@@ -1,0 +1,13 @@
+$kind: http-request
+name: api/auth/register
+url: http://127.0.0.1:8000/api/auth/register
+method: POST
+body:
+  type: json
+  content: |-
+    {
+      "full_name": "Postman Tester",
+      "email": "postman@example.com",
+      "password": "Futsal-Demo-2026!"
+    }
+order: 1000

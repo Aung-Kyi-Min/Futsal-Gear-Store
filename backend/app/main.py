@@ -9,7 +9,9 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
+from .admin import router as admin_router
 from .auth import router as auth_router
+from .catalog import router as catalog_router
 
 DB_PATH = Path(os.getenv("DATABASE_PATH", "store.db"))
 PRODUCTS = [
@@ -122,9 +124,11 @@ app = FastAPI(title="Futsal Gear Store API", version="1.0.0", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=os.getenv("CORS_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173").split(","),
-    allow_methods=["GET", "POST"], allow_headers=["Content-Type", "Authorization"],
+    allow_methods=["GET", "POST", "PATCH"], allow_headers=["Content-Type", "Authorization"],
 )
 app.include_router(auth_router)
+app.include_router(admin_router)
+app.include_router(catalog_router)
 
 
 class OrderItem(BaseModel):
@@ -144,8 +148,8 @@ def health():
     return {"status": "ok"}
 
 
-@app.get("/api/products")
-def products():
+@app.get("/api/demo/products")
+def demo_products():
     with closing(connect()) as db:
         rows = db.execute(f"""
             SELECT p.id, p.name, p.category, p.description, v.price_cents, p.image AS icon, v.color, v.stock
