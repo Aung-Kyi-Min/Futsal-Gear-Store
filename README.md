@@ -38,30 +38,6 @@ The initial migration creates role, user, category, brand, product, product vari
 
 If you prefer pgAdmin, open `backend/migrations/sql/0001_initial_erd.sql` in the Query Tool while connected to `futsal_gear_store` and execute it. Use either the SQL file or Alembic on an empty database, not both. This creates the schema and role rows; it does not import old SQLite products because that catalog has no brand, SKU, size, or colour data to fill the new required fields.
 
-<<<<<<< HEAD
-## PostgreSQL sample data
-
-After creating the PostgreSQL schema, open `backend/migrations/sql/0002_sample_data.sql` in pgAdmin's Query Tool on the same database and execute the entire file. It adds 8 fictional users, 10 products, 28 size/colour variants, current inventory, and 8 orders with matching items, stock movements, and status histories. Prices are illustrative MYR values stored in sen. There are out-of-stock and low-stock examples, an inactive customer, and orders in every supported status.
-
-The script requires empty business tables and refuses a second run; it does not delete existing data. Seed accounts have disabled password placeholders and cannot be used to test login. This data is for PostgreSQL queries; the current SQLite demo API does not read it.
-
-With `psql`, run from the project root:
-
-```sh
-psql -d futsal_gear_store -v ON_ERROR_STOP=1 -f backend/migrations/sql/0002_sample_data.sql
-```
-
-For example, query the seeded catalog and stock:
-
-```sql
-SELECT p.name, v.sku, v.size, v.colour,
-       v.price_minor / 100.0 AS price_myr, i.quantity_on_hand
-FROM products p
-JOIN product_variants v ON v.product_id = p.product_id
-JOIN inventory i ON i.variant_id = v.variant_id
-ORDER BY p.name, v.size;
-```
-=======
 ## Test authentication with Postman
 
 Start PostgreSQL and create the `futsal_gear_store` database. From `backend/`, run the migration setup above, then start FastAPI in the same terminal. Use your PostgreSQL username, password, and port in `DATABASE_URL`.
@@ -82,7 +58,6 @@ If the database was set up with the pgAdmin SQL script, skip the Alembic command
 | `GET http://127.0.0.1:8000/api/auth/me` | Authorization → Bearer Token. Paste the `access_token` from login. | `200 OK` with the signed-in user |
 
 Registering the same email again returns `409 Conflict`, regardless of letter case. An incorrect password or a missing or expired bearer token returns `401 Unauthorized`. Invalid registration input returns `422 Unprocessable Entity`.
->>>>>>> origin/zay
 
 ## Frontend
 
