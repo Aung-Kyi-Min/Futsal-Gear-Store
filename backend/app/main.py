@@ -9,6 +9,8 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
+from .auth import router as auth_router
+
 DB_PATH = Path(os.getenv("DATABASE_PATH", "store.db"))
 PRODUCTS = [
     (1, "Court Pro IC", "Footwear", "Precision grip. Every direction.", "👟"),
@@ -120,8 +122,9 @@ app = FastAPI(title="Futsal Gear Store API", version="1.0.0", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=os.getenv("CORS_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173").split(","),
-    allow_methods=["GET", "POST"], allow_headers=["Content-Type"],
+    allow_methods=["GET", "POST"], allow_headers=["Content-Type", "Authorization"],
 )
+app.include_router(auth_router)
 
 
 class OrderItem(BaseModel):
