@@ -6,7 +6,7 @@ body:
   type: json
   content: |-
     {
-      "email": "postman@example.com",
-      "password": "Futsal-Demo-2026!"
+      "email": "bogyi123@example.com",
+      "password": "bogyi123456789!"
     }
 order: 1868

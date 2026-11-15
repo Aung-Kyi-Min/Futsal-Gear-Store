@@ -25,7 +25,7 @@ class StoreTest(unittest.TestCase):
             'address': '123 Court Street', 'items': items})
 
     def test_catalog(self):
-        response = self.client.get('/api/products')
+        response = self.client.get('/api/demo/products')
         self.assertEqual(response.status_code, 200)
         self.assertEqual(len(response.json()['products']), 6)
 
@@ -33,7 +33,7 @@ class StoreTest(unittest.TestCase):
         response = self.order([{'product_id': 1, 'quantity': 2}])
         self.assertEqual(response.status_code, 201)
         self.assertEqual(response.json()['total_cents'], 51800)
-        self.assertEqual(self.client.get('/api/products').json()['products'][0]['stock'], 22)
+        self.assertEqual(self.client.get('/api/demo/products').json()['products'][0]['stock'], 22)
         with main.connect() as db:
             self.assertEqual(db.execute('SELECT COUNT(*) FROM orders').fetchone()[0], 1)
 
@@ -66,7 +66,7 @@ class StoreTest(unittest.TestCase):
     def test_duplicate_items_cannot_bypass_stock(self):
         response = self.order([{'product_id': 1, 'quantity': 20}, {'product_id': 1, 'quantity': 20}])
         self.assertEqual(response.status_code, 409)
-        self.assertEqual(self.client.get('/api/products').json()['products'][0]['stock'], 24)
+        self.assertEqual(self.client.get('/api/demo/products').json()['products'][0]['stock'], 24)
 
     def test_invalid_orders(self):
         for items, status in [([], 422), ([{'product_id': 1, 'quantity': 0}], 422),
@@ -95,7 +95,7 @@ class CatalogMigrationTest(unittest.TestCase):
 
             for _ in range(2):
                 with TestClient(main.app) as client:
-                    self.assertEqual(client.get('/api/products').json(), {
+                    self.assertEqual(client.get('/api/demo/products').json(), {
                         'products': [{
                             'id': 31, 'name': 'Legacy Boot', 'category': 'Footwear',
                             'description': 'Original description', 'price_cents': 15000,
