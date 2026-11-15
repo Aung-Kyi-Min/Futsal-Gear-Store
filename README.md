@@ -40,6 +40,16 @@ If you prefer pgAdmin, open `backend/migrations/sql/0001_initial_erd.sql` in the
 
 ## Test authentication with Postman
 
+To verify PostgreSQL credentials and generate the connection URL without manually encoding passwords, run from the project root:
+
+```sh
+backend/.venv/bin/python backend/scripts/configure_database.py
+```
+
+Enter your actual PostgreSQL password at the hidden prompt. The command tests the connection and saves `backend/.env` only after success. Restart FastAPI afterward. If the command reports that PostgreSQL rejected the credentials, confirm the server instance, username, and password in pgAdmin; changing the URL syntax cannot fix a password rejected by the server.
+
+For local setup, copy `backend/.env.example` to `backend/.env` if that file does not already exist. Set `DATABASE_URL` to your actual PostgreSQL connection string and set `AUTH_SECRET_KEY` to a random secret of at least 32 bytes. Keep this file private; Git ignores it. Restart FastAPI after editing the file. A registration response of `503` with `Authentication database is not configured` means `DATABASE_URL` is missing or empty.
+
 Start PostgreSQL and create the `futsal_gear_store` database. From `backend/`, run the migration setup above, then start FastAPI in the same terminal. Use your PostgreSQL username, password, and port in `DATABASE_URL`.
 
 ```sh
@@ -61,6 +71,10 @@ Registering the same email again returns `409 Conflict`, regardless of letter ca
 
 ## Frontend
 
+The account dialog calls the PostgreSQL registration and login APIs. Signup requires a 12–128 character password; after registration, log in to start a session. The access token stays in session storage for the current tab, and `/api/auth/me` restores the account after a reload. Log out clears the token. Configure `DATABASE_URL` and `AUTH_SECRET_KEY` as described above before testing accounts. SQL seed accounts have disabled passwords; register a new account through the UI.
+
+The signed-in name and email prefill checkout. Checkout still uses the guest SQLite order API and does not associate orders with the PostgreSQL account.
+
 In another terminal, from the project root:
 
 ```sh
@@ -72,6 +86,12 @@ npm run dev
 Open http://localhost:5173. Vite proxies `/api` requests to the backend on port 8000. Keep both servers running.
 
 ## Checks
+
+Frontend API request and error handling checks:
+
+```sh
+node --test frontend/tests/api.test.js
+```
 
 ```sh
 cd backend
@@ -85,7 +105,7 @@ npm run build
 
 ## Configuration and deployment
 
-The backend reads `DATABASE_PATH` (default `store.db` in its working directory) and `CORS_ORIGINS` (comma-separated allowed frontend origins) from the process environment. `.env.example` files document configuration; the backend does not automatically load `.env` files. Startup seeds a new SQLite database and migrates existing catalogs in place.
+The backend reads `DATABASE_PATH` (default `store.db` in its working directory) and `CORS_ORIGINS` (comma-separated allowed frontend origins) from the process environment. `.env.example` files document configuration; the backend and Alembic automatically load `backend/.env`; exported environment variables take precedence. Startup seeds a new SQLite database and migrates existing catalogs in place.
 
 `products` stores the name, category, description, and image. Each `product_variants` row stores a product's size, colour, unique SKU, price in MYR cents, and stock quantity. Existing products migrate to one `One Size` variant each, keeping their product IDs, prices, and stock. The current storefront and checkout use the variant with the lowest ID for each product.
 
