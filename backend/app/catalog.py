@@ -3,7 +3,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query
 from pydantic import BaseModel
-from sqlalchemy import text
+from sqlalchemy import bindparam, text
 from sqlalchemy.engine import Connection
 from sqlalchemy.exc import OperationalError
 
@@ -60,7 +60,7 @@ class ProductDetail(ProductSummary):
 
 
 class ProductPage(BaseModel):
-    products: list[ProductSummary]
+    products: list[ProductDetail]
     total: int
     page: int
     page_size: int
@@ -100,7 +100,25 @@ def list_products(
     page: PageNumber = 1,
     page_size: PageSize = 20,
 ):
-    return product_page(db, search, category_id, brand_id, page, page_size, is_active=True)
+    result = product_page(db, search, category_id, brand_id, page, page_size, is_active=True)
+    # Fetch variants once for the page, rather than issuing one query per card.
+    variants_by_product = {product['product_id']: [] for product in result['products']}
+    if variants_by_product:
+        variants = db.execute(
+            text(f"""
+                {VARIANT_FIELDS.replace('SELECT v.variant_id', 'SELECT v.product_id, v.variant_id', 1)}
+                WHERE v.product_id IN :product_ids AND v.is_active
+                ORDER BY v.variant_id
+            """).bindparams(bindparam('product_ids', expanding=True)),
+            {'product_ids': list(variants_by_product)},
+        ).mappings().all()
+        for variant in variants:
+            variants_by_product[variant['product_id']].append(variant)
+    result['products'] = [
+        {**product, 'variants': variants_by_product[product['product_id']]}
+        for product in result['products']
+    ]
+    return result
 
 
 def product_page(
