@@ -1,6 +1,6 @@
 # Court Supply — Futsal Gear Store
 
-A local e-commerce starter using Python/FastAPI and React/Vite. The authentication API uses PostgreSQL. The existing catalog and checkout use the SQLite demo data. PostgreSQL migrations also define the planned catalog, inventory, orders, and audit history.
+A local e-commerce starter using Python/FastAPI and React/Vite. Authentication and the public catalog API use PostgreSQL. The React demo and its checkout use SQLite. PostgreSQL migrations also define inventory, orders, and audit history.
 
 ## Requirements
 
@@ -38,12 +38,11 @@ The initial migration creates role, user, category, brand, product, product vari
 
 If you prefer pgAdmin, open `backend/migrations/sql/0001_initial_erd.sql` in the Query Tool while connected to `futsal_gear_store` and execute it. Use either the SQL file or Alembic on an empty database, not both. This creates the schema and role rows; it does not import old SQLite products because that catalog has no brand, SKU, size, or colour data to fill the new required fields.
 
-<<<<<<< HEAD
 ## PostgreSQL sample data
 
 After creating the PostgreSQL schema, open `backend/migrations/sql/0002_sample_data.sql` in pgAdmin's Query Tool on the same database and execute the entire file. It adds 8 fictional users, 10 products, 28 size/colour variants, current inventory, and 8 orders with matching items, stock movements, and status histories. Prices are illustrative MYR values stored in sen. There are out-of-stock and low-stock examples, an inactive customer, and orders in every supported status.
 
-Run the sample script before registering users if you want both sample data and working accounts in the same database. The script requires empty business tables and refuses a second run. The catalog and checkout endpoints still use SQLite.
+Run the sample script before registering users if you want both sample data and working accounts in the same database. The script requires empty business tables and refuses a second run.
 
 With `psql`, run from the project root:
 
@@ -62,13 +61,23 @@ JOIN inventory i ON i.variant_id = v.variant_id
 ORDER BY p.name, v.size;
 ```
 
-=======
->>>>>>> b08705aa25e736da515f2b37704c537e731576cf
+## Test the catalog with Postman
+
+Set `DATABASE_URL` to the PostgreSQL instance where you applied the schema and sample data. Start FastAPI and send these requests to `http://127.0.0.1:8000` with **No Auth**.
+
+| Request | Result |
+| --- | --- |
+| `GET /api/categories` | Category IDs and names |
+| `GET /api/brands` | Brand IDs and names |
+| `GET /api/products` | Active products with category, brand, base price, image, and availability |
+| `GET /api/products/{product_id}` | Product details and active variants with SKU, size, colour, price, and stock |
+
+Try `GET /api/products?search=lunar&category_id=1&brand_id=1&page=1&page_size=5` with the sample data. Search matches part of a name or description without regard to case. Filters combine, and the response includes `total`, `page`, and `page_size`. The default page size is 20 and the maximum is 100. Use a `product_id` from the list to request details. Missing or inactive products return `404`. An active variant with zero stock remains visible.
+
+Prices use integer minor units in the product's currency. For MYR, `29900` means RM299.00. The React demo reads `GET /api/demo/products` and checks out against SQLite through `POST /api/orders`. Use the demo product IDs for that checkout.
+
 ## Test authentication with Postman
 
-<<<<<<< HEAD
-Start PostgreSQL and set up the schema as described above. From `backend/`, start FastAPI with the same PostgreSQL database. Use your PostgreSQL username, password, and port in `DATABASE_URL`.
-=======
 To verify PostgreSQL credentials and generate the connection URL without manually encoding passwords, run from the project root:
 
 ```sh
@@ -79,8 +88,7 @@ Enter your actual PostgreSQL password at the hidden prompt. The command tests th
 
 For local setup, copy `backend/.env.example` to `backend/.env` if that file does not already exist. Set `DATABASE_URL` to your actual PostgreSQL connection string and set `AUTH_SECRET_KEY` to a random secret of at least 32 bytes. Keep this file private; Git ignores it. Restart FastAPI after editing the file. A registration response of `503` with `Authentication database is not configured` means `DATABASE_URL` is missing or empty.
 
-Start PostgreSQL and create the `futsal_gear_store` database. From `backend/`, run the migration setup above, then start FastAPI in the same terminal. Use your PostgreSQL username, password, and port in `DATABASE_URL`.
->>>>>>> 33cebafb47cae46729f3da82156d42c420878e23
+After applying the PostgreSQL schema, start FastAPI from `backend/`. If you prefer environment variables in your terminal, use your PostgreSQL username, password, and port in `DATABASE_URL`.
 
 ```sh
 export DATABASE_URL='postgresql+psycopg://postgres:YOUR_PASSWORD@127.0.0.1:5432/futsal_gear_store'
@@ -111,6 +119,29 @@ WHERE email = 'staff-test@example.com';
 ```
 
 Use `administrator` to test that role or `customer` to restore the account. The API reads the current role from PostgreSQL on each protected request, so you can reuse an unexpired token after changing the role.
+
+## Test the admin APIs with Postman
+
+Use `http://127.0.0.1:8000` as the base URL and set **Authorization → Bearer Token** to a manager or administrator's access token. Send write request bodies as **Body → raw → JSON**. These APIs use the existing PostgreSQL schema and seeded orders.
+
+| Request | What to send or expect |
+| --- | --- |
+| `GET /api/admin/products` | List products, including inactive ones. Supports the public catalog filters and `is_active`. |
+| `GET /api/admin/products/{product_id}` | Product and variants with stock and activity flags. |
+| `POST /api/admin/products` | Send `{"name":"Training Boot","category_id":1,"brand_id":1,"base_price_minor":12900}`. Use category and brand IDs from the public lists. |
+| `PATCH /api/admin/products/{product_id}` | Edit product fields, or send `{"is_active":false}` to hide it from the public catalog. |
+| `POST /api/admin/products/{product_id}/variants` | Send `{"sku":"TRAINING-BOOT-42","size":"EU 42","colour":"Black","price_minor":12900}`. New variants start at zero stock. |
+| `PATCH /api/admin/products/{product_id}/variants/{variant_id}` | Edit SKU, size, colour, price, or `is_active`. Duplicate SKUs and duplicate size/colour pairs within a product return `409`. |
+| `POST /api/admin/categories` or `POST /api/admin/brands` | Send `{"name":"Example Name"}` to add an entry for product creation. |
+| `GET /api/admin/inventory?max_quantity=4` | List variants with up to four units. Also supports `product_id`, `page`, and `page_size`. |
+| `GET /api/admin/inventory/{variant_id}` | Read the current quantity before making an adjustment. |
+| `PATCH /api/admin/inventory/{variant_id}` | For a new variant, send `{"expected_quantity":0,"quantity_on_hand":5,"reason":"Opening stock"}`. If stock changed and the target differs from the current quantity, the API returns `409`. Reload before retrying. |
+| `GET /api/admin/inventory/{variant_id}/movements` | Read the latest stock changes, including delta, reason, and staff user. Supports `limit`. |
+| `GET /api/admin/orders?status=placed&page=1&page_size=5` | Find an order ID to test. The status filter is optional. |
+| `GET /api/admin/orders/{order_id}` | Order totals, delivery details, item snapshots, and status history. |
+| `PATCH /api/admin/orders/{order_id}/status` | Send `{"status":"shipped"}`, then `{"status":"delivered"}`. Skipping stages or moving backwards returns `409`. Repeating the current status returns `200` without adding a history entry. |
+
+Product and variant deactivation preserves existing orders. PostgreSQL orders appear in the admin API. The React demo checkout still creates SQLite orders.
 
 ## Frontend
 
@@ -150,7 +181,7 @@ npm run build
 
 The backend reads `DATABASE_PATH` (default `store.db` in its working directory) and `CORS_ORIGINS` (comma-separated allowed frontend origins) from the process environment. `.env.example` files document configuration; the backend and Alembic automatically load `backend/.env`; exported environment variables take precedence. Startup seeds a new SQLite database and migrates existing catalogs in place.
 
-`products` stores the name, category, description, and image. Each `product_variants` row stores a product's size, colour, unique SKU, price in MYR cents, and stock quantity. Existing products migrate to one `One Size` variant each, keeping their product IDs, prices, and stock. The current storefront and checkout use the variant with the lowest ID for each product.
+The SQLite demo upgrades older products to one `One Size` variant each, keeping their product IDs, prices, and stock. The demo storefront and checkout use the variant with the lowest ID for each product.
 
 The frontend accepts `VITE_API_URL` for a separately hosted backend; set it before building. The Vite proxy is for development only. Serve `frontend/dist` with a static host and deploy FastAPI separately, or configure your production reverse proxy to forward `/api` to FastAPI. Use persistent storage for the SQLite database.
 

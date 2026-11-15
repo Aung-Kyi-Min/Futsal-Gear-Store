@@ -1,0 +1,12 @@
+$kind: http-request
+name: api/admin/orders
+description: ""
+url: http://127.0.0.1:8000/api/admin/orders?status=placed
+method: GET
+queryParams:
+  status: placed
+auth:
+  type: bearer
+  credentials:
+    token: "{{json_web_token_141o}}"
+order: 7000
