@@ -1,123 +1,207 @@
-import React, { useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { request } from './api.js';
+import { adminPages, ordersCsv, productPayload, stockPayload, variantPayload } from './adminApi.js';
 import './admin.css';
 
-const initialProducts = [
-  { id: 'CS-001', name: 'Control Pro Indoor', category: 'Footwear', price: 289, stock: 18, status: 'Active' },
-  { id: 'CS-002', name: 'Matchday Futsal Ball', category: 'Balls', price: 89, stock: 7, status: 'Active' },
-  { id: 'CS-003', name: 'Court Grip Socks', category: 'Apparel', price: 39, stock: 3, status: 'Low stock' },
-  { id: 'CS-004', name: 'Everyday Training Tee', category: 'Apparel', price: 79, stock: 0, status: 'Out of stock' },
-  { id: 'CS-005', name: 'Quick Touch Shin Guards', category: 'Accessories', price: 55, stock: 12, status: 'Active' },
-];
-const initialOrders = [
-  { id: 'CS-1048', customer: 'Mia Rahman', date: '15 Nov 2026', total: 378, status: 'Processing', items: 2 },
-  { id: 'CS-1047', customer: 'Daniel Wong', date: '15 Nov 2026', total: 89, status: 'New', items: 1 },
-  { id: 'CS-1046', customer: 'Sofia Lim', date: '14 Nov 2026', total: 328, status: 'Ready to ship', items: 2 },
-  { id: 'CS-1045', customer: 'Irfan Aziz', date: '14 Nov 2026', total: 79, status: 'Delivered', items: 1 },
-];
-const navByRole = {
-  manager: [['Overview', '◫'], ['Orders', '↗'], ['Products', '◇'], ['Inventory', '▤']],
-  administrator: [['Overview', '◫'], ['Orders', '↗'], ['Products', '◇'], ['Inventory', '▤'], ['Staff & roles', '♧'], ['Settings', '⚙']],
-};
-const currency = value => `RM ${Number(value).toFixed(2)}`;
+const money = (minor, currency = 'MYR') => new Intl.NumberFormat('en-MY', { style: 'currency', currency }).format(minor / 100);
+const date = value => new Intl.DateTimeFormat('en-MY', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'Asia/Kuala_Lumpur' }).format(new Date(value));
+const nextStatus = { placed: 'shipped', shipped: 'delivered' };
+const emptyData = { products: [], orders: [], inventory: [], categories: [], brands: [] };
+const sections = [['Overview', '◫'], ['Orders', '↗'], ['Products', '◇'], ['Inventory', '▤']];
 
-export default function AdminDashboard({ user, sessionLoading = false, onLogin, onLogout, onExit }) {
+export default function AdminDashboard({ user, token, sessionLoading = false, onLogin, onLogout, onExit }) {
   const [section, setSection] = useState('Overview');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loginError, setLoginError] = useState('');
-  const [products, setProducts] = useState(initialProducts);
-  const [orders, setOrders] = useState(initialOrders);
+  const [loginBusy, setLoginBusy] = useState(false);
+  const [data, setData] = useState(emptyData);
   const [search, setSearch] = useState('');
-  const [toast, setToast] = useState('');
+  const [status, setStatus] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const [notice, setNotice] = useState('');
+  const [modal, setModal] = useState(null);
+  const [modalError, setModalError] = useState('');
+  const [detailLoading, setDetailLoading] = useState(false);
+  const logoutRef = useRef(onLogout);
+  logoutRef.current = onLogout;
+  const generation = useRef(0);
+  const controller = useRef(null);
+  const staff = ['manager', 'administrator'].includes(user?.role);
 
-  const filteredProducts = useMemo(() => products.filter(p => `${p.name} ${p.category} ${p.id}`.toLowerCase().includes(search.toLowerCase())), [products, search]);
-  const filteredOrders = useMemo(() => orders.filter(o => `${o.id} ${o.customer} ${o.status}`.toLowerCase().includes(search.toLowerCase())), [orders, search]);
-  const lowStock = products.filter(p => p.stock > 0 && p.stock <= 5).length;
+  const reload = useCallback(async () => {
+    const version = ++generation.current;
+    controller.current?.abort();
+    controller.current = new AbortController();
+    const signal = controller.current.signal;
+    setLoading(true); setError('');
+    try {
+      const [products, orders, inventory, categories, brands] = await Promise.all([
+        adminPages('products', token, signal), adminPages('orders', token, signal),
+        adminPages('inventory', token, signal), request('/api/categories', { signal }), request('/api/brands', { signal }),
+      ]);
+      if (version === generation.current) setData({ products, orders, inventory, categories, brands });
+    } catch (err) {
+      if (version !== generation.current) return;
+      if (err.status === 401) { logoutRef.current(); return; }
+      setError(err.message); setData(emptyData);
+    } finally { if (version === generation.current) setLoading(false); }
+  }, [token]);
+
+  useEffect(() => {
+    if (staff && token && !sessionLoading) reload();
+    else setData(emptyData);
+    return () => { generation.current += 1; controller.current?.abort(); };
+  }, [staff, user?.user_id, token, sessionLoading, reload]);
 
   async function signIn(event) {
     event.preventDefault();
-    setLoginError('');
+    if (loginBusy) return;
+    setLoginBusy(true); setLoginError('');
+    try { await onLogin(email.trim(), password); setPassword(''); setSection('Overview'); }
+    catch (err) { setLoginError(err.message); }
+    finally { setLoginBusy(false); }
+  }
+
+  async function openDetail(kind, id) {
+    if (busy || detailLoading) return;
+    setDetailLoading(true); setModalError(''); setError('');
+    const version = generation.current;
     try {
-      const found = await onLogin(email.trim(), password);
-      if (!['manager', 'administrator'].includes(found.role)) throw new Error('This account is not assigned a manager or administrator role.');
-      setSection('Overview');
-    } catch (error) { setLoginError(error.message || 'We could not verify those staff credentials. Check your email and password.'); }
+      const path = kind === 'movements' ? `inventory/${id}/movements` : `${kind}/${id}`;
+      const result = await request(`/api/admin/${path}`, { token });
+      if (version === generation.current) setModal({ kind, value: result, id });
+    } catch (err) {
+      if (err.status === 401) onLogout();
+      else setError(err.message);
+    } finally { setDetailLoading(false); }
   }
-  function signOut() { setEmail(''); setPassword(''); setSearch(''); onLogout(); }
-  function showToast(message) { setToast(message); window.setTimeout(() => setToast(''), 2600); }
-  function adjustStock(id, amount) {
-    setProducts(old => old.map(p => p.id === id ? { ...p, stock: Math.max(0, p.stock + amount), status: p.stock + amount === 0 ? 'Out of stock' : p.stock + amount <= 5 ? 'Low stock' : 'Active' } : p));
+
+  async function mutate(path, method, body, success) {
+    if (busy) return;
+    setBusy(true); setModalError(''); setError(''); setNotice('');
+    try {
+      await request(`/api/admin/${path}`, { token, method, body });
+      setModal(null); setNotice(success); await reload();
+    } catch (err) {
+      if (err.status === 401) { onLogout(); return; }
+      setModalError(err.message); setError(err.message);
+      // Refresh stale quantities/status after another staff member changed them.
+      if (err.status === 409) { setModal(null); await reload(); setError(err.message); }
+    } finally { setBusy(false); }
   }
-  function advanceOrder(id) {
-    const steps = role === 'administrator' ? ['New', 'Processing', 'Ready to ship', 'Shipped', 'Delivered'] : ['New', 'Processing', 'Ready to ship', 'Shipped'];
-    setOrders(old => old.map(order => {
-      if (order.id !== id) return order;
-      const next = steps[Math.min(steps.indexOf(order.status) + 1, steps.length - 1)];
-      return { ...order, status: next };
-    }));
-    showToast(`Order ${id} updated`);
+
+  function editProduct(product = null) { setModalError(''); setModal({ kind: 'product-form', value: product }); }
+  function formSubmit(event, kind, value) {
+    event.preventDefault();
+    const values = Object.fromEntries(new FormData(event.currentTarget));
+    try {
+      if (kind === 'product-form') {
+        mutate(value ? `products/${value.product_id}` : 'products', value ? 'PATCH' : 'POST', productPayload(values), 'Product saved.');
+      } else if (kind === 'variant-form') {
+        const path = `products/${modal.productId}/variants${value ? '/' + value.variant_id : ''}`;
+        mutate(path, value ? 'PATCH' : 'POST', variantPayload(values), 'Variant saved. Set its stock in Inventory.');
+      } else if (kind === 'stock') {
+        mutate(`inventory/${value.variant_id}`, 'PATCH', stockPayload(value, values), 'Inventory adjustment saved.');
+      } else {
+        mutate(kind, 'POST', { name: values.name.trim() }, `${kind === 'categories' ? 'Category' : 'Brand'} created.`);
+      }
+    } catch (err) { setModalError(err.message); }
+  }
+  function advance(order) {
+    const status = nextStatus[order.status];
+    if (status) mutate(`orders/${order.order_id}/status`, 'PATCH', { status }, `Order marked ${status}.`);
   }
   function exportReport() {
-    const csv = ['Order,Customer,Date,Items,Total,Status', ...orders.map(o => `${o.id},${o.customer},${o.date},${o.items},${o.total},${o.status}`)].join('\n');
-    const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
-    const link = document.createElement('a'); link.href = url; link.download = 'court-supply-orders.csv'; link.click(); URL.revokeObjectURL(url);
-    showToast('Orders report downloaded');
+    const url = URL.createObjectURL(new Blob([ordersCsv(data.orders)], { type: 'text/csv;charset=utf-8' }));
+    const link = document.createElement('a'); link.href = url; link.download = 'court-supply-orders.csv'; link.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
+  function switchSection(next) { setSection(next); setSearch(''); setStatus(''); setError(''); }
 
-  if (sessionLoading) return <div className="staff-login-page"><div className="staff-login-card"><a className="staff-brand">◈ COURT<span>SUPPLY</span></a><p className="staff-kicker">TEAM ACCESS</p><h1>Checking your<br/>staff session…</h1></div></div>;
-  if (!user) return <div className="staff-login-page">
-    <button className="staff-back" onClick={onExit}>← Back to storefront</button>
-    <section className="staff-login-card">
-      <a className="staff-brand" href="/" onClick={e => { e.preventDefault(); onExit(); }}>◈ COURT<span>SUPPLY</span></a>
-      <p className="staff-kicker">TEAM ACCESS</p><h1>Store operations,<br/>all in one place.</h1>
-      <p className="staff-lead">Sign in with your assigned staff account to continue.</p>
-      <form onSubmit={signIn}>
-        <label>Work email<input type="email" autoComplete="username" required value={email} onChange={e => setEmail(e.target.value)} placeholder="name@yourstore.com"/></label>
-        <label>Password<input type="password" autoComplete="current-password" required value={password} onChange={e => setPassword(e.target.value)} placeholder="Enter your password"/></label>
-        {loginError && <p className="staff-login-error" role="alert">{loginError}</p>}
-        <button className="staff-login-submit">Sign in to dashboard <span>↗</span></button>
-      </form>
-      <div className="demo-accounts"><strong>Staff access</strong><p>Use the work account created for your manager or administrator role.</p><p>Customer accounts cannot access this dashboard.</p></div>
-      <p className="staff-demo-note">Role and credentials are verified by the store authentication service. Dashboard operations shown here are a UI preview.</p>
-    </section><div className="staff-login-art"><span>YOUR STORE.<br/>IN PLAY.</span><b>⚽</b></div>
-  </div>;
+  if (sessionLoading) return <div className="staff-login-page"><section className="staff-login-card"><h1>Checking your<br/>staff session…</h1></section></div>;
+  if (!user) return <div className="staff-login-page"><button className="staff-back" onClick={onExit}>← Back to storefront</button><section className="staff-login-card">
+    <a className="staff-brand" href="/" onClick={e => { e.preventDefault(); onExit(); }}>◈ COURT<span>SUPPLY</span></a>
+    <p className="staff-kicker">TEAM ACCESS</p><h1>Store operations,<br/>all in one place.</h1><p className="staff-lead">Sign in with your assigned staff account.</p>
+    <form onSubmit={signIn}><label>Work email<input type="email" required autoComplete="username" value={email} onChange={e => setEmail(e.target.value)}/></label><label>Password<input type="password" required autoComplete="current-password" value={password} onChange={e => setPassword(e.target.value)}/></label>
+      {loginError && <p className="staff-login-error" role="alert">{loginError}</p>}<button className="staff-login-submit" disabled={loginBusy}>{loginBusy ? 'Signing in…' : 'Sign in to dashboard ↗'}</button></form>
+    <p className="staff-demo-note">Manager or administrator access is required.</p></section><div className="staff-login-art"><span>YOUR STORE.<br/>IN PLAY.</span><b>⚽</b></div></div>;
+  if (!staff) return <div className="staff-login-page"><section className="staff-login-card"><h1>Staff access required.</h1><p>Your account cannot access this dashboard.</p><button className="staff-login-submit" onClick={onLogout}>Log out</button><button onClick={onExit}>Return to storefront</button></section></div>;
 
-  const role = user.role;
-  if (!['manager', 'administrator'].includes(role)) return <div className="staff-login-page"><section className="staff-login-card"><a className="staff-brand">◈ COURT<span>SUPPLY</span></a><p className="staff-kicker">ACCESS RESTRICTED</p><h1>This area is for<br/>store staff.</h1><p className="staff-lead">Your account does not have manager or administrator access.</p><button className="staff-login-submit" onClick={onLogout}>Sign in with another account</button><button className="staff-back" onClick={onExit}>← Return to storefront</button></section></div>;
-  const admin = role === 'administrator';
-  return <div className={`admin-shell ${admin ? 'role-administrator' : 'role-manager'}`}>
-    <aside className="admin-sidebar">
-      <a className="admin-brand" href="/" onClick={e => { e.preventDefault(); onExit(); }}>◈ COURT<span>SUPPLY</span></a>
-      <div className="admin-workspace"><span className="workspace-mark">C</span><span><strong>{admin ? 'Store administration' : 'Daily operations'}</strong><small>{admin ? 'Full store access' : 'Manager workspace'}</small></span><b>⌄</b></div>
-      <p className="admin-nav-label">WORKSPACE</p>
-      <nav className="admin-nav">{navByRole[role].map(([label, icon]) => <button key={label} className={section === label ? 'selected' : ''} onClick={() => { setSection(label); setSearch(''); }}><span>{icon}</span>{label}{label === 'Orders' && <i>4</i>}</button>)}</nav>
-      <div className="sidebar-bottom"><div className="demo-pill"><span/> DEMO DATA</div><button className="store-link" onClick={onExit}>↗ <span>View storefront</span></button><small>Store dashboard · UI preview</small></div>
-    </aside>
-    <div className="admin-main">
-      <header className="admin-topbar"><div className="breadcrumb">Store / <strong>{section}</strong></div><div className="topbar-actions"><span className="today-label">{new Intl.DateTimeFormat('en-MY', { dateStyle: 'medium' }).format(new Date())}</span><button className="topbar-icon" aria-label="Notifications" onClick={() => showToast('You are all caught up')}>♧<i/></button><button className="staff-profile" onClick={signOut}><span className="profile-avatar">{user.full_name.split(' ').map(n => n[0]).join('')}</span><span><strong>{user.full_name}</strong><small>{admin ? 'Administrator' : 'Store manager'}</small></span><b>⌄</b></button></div></header>
-      <main className="admin-content">
-        <div className="admin-page-heading"><div><p className="staff-kicker">{admin ? 'ADMINISTRATOR WORKSPACE' : 'MANAGER WORKSPACE'}</p><h1>{section === 'Overview' ? `Welcome back, ${user.full_name.split(' ')[0]}.` : section}</h1><p>{section === 'Overview' ? (admin ? 'Here’s what’s happening across your store.' : 'Your store operations at a glance.') : `Review and manage your store ${section.toLowerCase()}.`}</p></div>{section === 'Orders' && admin && <button className="outline-action" onClick={exportReport}>↓ Export report</button>}</div>
+  const disabled = loading || busy || detailLoading || !!error;
+  const matches = (...values) => values.join(' ').toLowerCase().includes(search.toLowerCase());
+  const products = data.products.filter(p => matches(p.name, p.category, p.brand, p.product_id));
+  const orders = data.orders.filter(o => matches(o.order_id, o.delivery_name, o.status) && (!status || o.status === status));
+  const inventory = data.inventory.filter(i => matches(i.product_name, i.sku, i.size, i.colour));
+  const lowStock = data.inventory.filter(i => i.is_active && i.product_is_active && i.quantity_on_hand <= 5);
+  const sales = data.orders.reduce((totals, order) => ({ ...totals, [order.currency]: (totals[order.currency] || 0) + order.total_minor }), {});
+
+  return <div className={`admin-shell role-${user.role}`}>
+    <aside className="admin-sidebar"><a className="admin-brand" href="/" onClick={e => { e.preventDefault(); onExit(); }}>◈ COURT<span>SUPPLY</span></a>
+      <div className="admin-workspace"><span className="workspace-mark">C</span><span><strong>Store operations</strong><small>{user.role === 'administrator' ? 'Administrator' : 'Manager'} workspace</small></span></div>
+      <p className="admin-nav-label">WORKSPACE</p><nav className="admin-nav">{sections.map(([label, icon]) => <button key={label} className={section === label ? 'selected' : ''} disabled={busy} onClick={() => switchSection(label)}><span>{icon}</span>{label}{label === 'Orders' && <i>{data.orders.filter(o => o.status === 'placed').length}</i>}</button>)}</nav>
+      <div className="sidebar-bottom"><button className="store-link" onClick={onExit}>↗ View storefront</button><small>PostgreSQL store management</small></div></aside>
+    <div className="admin-main"><header className="admin-topbar"><div className="breadcrumb">Store / <strong>{section}</strong></div><div className="topbar-actions"><span>{user.full_name}</span><button className="outline-action" onClick={onLogout}>Log out</button></div></header>
+      <main className="admin-content"><div className="admin-page-heading"><div><p className="staff-kicker">STAFF WORKSPACE</p><h1>{section}</h1><p>Manage your store products, orders, and variant stock.</p></div><button className="outline-action" disabled={loading || busy} onClick={reload}>↻ Refresh</button></div>
+        {error && <p className="admin-error" role="alert">{error} <button onClick={reload} disabled={loading || busy}>Reload data</button></p>}
+        {notice && <p className="admin-notice" role="status">{notice}</p>}
+        {(loading || detailLoading) && <p role="status">{loading ? 'Loading store data…' : 'Loading details…'}</p>}
+        {busy && <p role="status">Saving changes…</p>}
         {section === 'Overview' && <>
-          <div className="dashboard-cards"><Metric label="Gross sales" value="RM 4,286.00" note="↑ 12.8%" detail="compared with last month" icon="↗"/><Metric label="Orders" value="38" note="↑ 8.2%" detail="compared with last month" icon="▤"/><Metric label="Products" value={products.length} note={`${lowStock} need attention`} detail="active catalog items" icon="◇"/><Metric label={admin ? 'Team members' : 'Open orders'} value={admin ? '6' : orders.filter(o => !['Delivered', 'Shipped'].includes(o.status)).length} note={admin ? '4 managers · 2 admins' : 'Across 3 order stages'} detail={admin ? 'with store access' : 'ready for your review'} icon={admin ? '♧' : '◷'}/></div>
-          <div className="overview-grid"><section className="panel sales-panel"><PanelHeader title="Sales overview" subtitle="Store performance · Last 7 days" action="Last 7 days⌄"/><div className="chart-summary"><strong>RM 2,840.00</strong><span>↑ 9.4% <small>vs previous week</small></span></div><SalesChart/></section><section className="panel stock-panel"><PanelHeader title="Inventory to watch" subtitle={`${lowStock} products need attention`} action="View inventory →" onAction={() => setSection('Inventory')}/>{products.filter(p => p.stock <= 5).map(p => <div className="stock-row" key={p.id}><span className="stock-product-icon">{p.category === 'Footwear' ? '👟' : p.category === 'Balls' ? '⚽' : '◈'}</span><span className="stock-product-name"><strong>{p.name}</strong><small>{p.id} · {p.category}</small></span><span className={p.stock === 0 ? 'stock-zero' : 'stock-low'}>{p.stock === 0 ? 'Out of stock' : `${p.stock} left`}</span></div>)}</section></div>
-          <section className="panel recent-panel"><PanelHeader title="Recent orders" subtitle="The latest activity from your customers" action="View all orders →" onAction={() => setSection('Orders')}/><OrderTable orders={orders.slice(0, 4)} onAdvance={advanceOrder} role={role}/></section>
-          {admin && <section className="admin-tip"><span>✦</span><p><strong>Administrator access</strong><br/>You can manage team access and store-wide settings from the sidebar.</p><button onClick={() => setSection('Staff & roles')}>Manage staff →</button></section>}
+          <div className="dashboard-cards"><Metric label="Order value" value={Object.entries(sales).map(([c, total]) => money(total, c)).join(' / ') || '—'} detail="All recorded orders; not payment revenue"/>
+            <Metric label="Orders" value={data.orders.length} detail={`${data.orders.filter(o => o.status !== 'delivered').length} awaiting delivery`}/>
+            <Metric label="Products" value={data.products.length} detail={`${data.products.filter(p => p.is_active).length} active products`}/>
+            <Metric label="Low / no stock" value={lowStock.length} detail="Active variants with 5 or fewer units"/></div>
+          <section className="panel table-panel"><PanelHeader title="Recent orders" action="View orders →" onAction={() => switchSection('Orders')}/><OrderTable orders={data.orders.slice(0, 5)} disabled={disabled} onDetail={o => openDetail('orders', o.order_id)} onAdvance={advance}/></section>
+          <section className="panel table-panel"><PanelHeader title="Stock to watch" action="View inventory →" onAction={() => switchSection('Inventory')}/><InventoryTable rows={lowStock.slice(0, 5)} disabled={disabled} onAdjust={row => { setModalError(''); setModal({ kind: 'stock', value: row }); }} onHistory={row => openDetail('movements', row.variant_id)}/></section>
         </>}
-        {section === 'Orders' && <section className="panel table-panel"><PanelHeader title="All orders" subtitle={`${orders.length} demo orders`} action="↓ Export CSV" onAction={admin ? exportReport : () => showToast('Ask an administrator to export reports')}/><label className="table-search">⌕<input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search order or customer" aria-label="Search orders"/></label><OrderTable orders={filteredOrders} onAdvance={advanceOrder} role={role}/></section>}
-        {section === 'Products' && <section className="panel table-panel"><PanelHeader title="Product catalog" subtitle={`${products.length} products`} action={admin ? '+ Add product' : 'Catalog overview'} onAction={() => showToast(admin ? 'Product editor is a UI preview' : 'Product changes are managed by administrators')}/><label className="table-search">⌕<input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search products" aria-label="Search products"/></label><ProductTable products={filteredProducts}/></section>}
-        {section === 'Inventory' && <section className="panel table-panel"><PanelHeader title="Inventory levels" subtitle="Update on-hand quantities" action="Inventory guide ↗" onAction={() => showToast('Inventory guide is coming soon')}/><label className="table-search">⌕<input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search products or SKU" aria-label="Search inventory"/></label><InventoryTable products={filteredProducts} onAdjust={adjustStock}/></section>}
-        {section === 'Staff & roles' && admin && <section className="panel table-panel"><PanelHeader title="Staff & roles" subtitle="People with access to Court Supply" action="+ Invite team member" onAction={() => showToast('Invite flow is a UI preview')}/><div className="staff-table"><div className="table-head"><span>TEAM MEMBER</span><span>ROLE</span><span>STATUS</span><span>LAST ACTIVE</span></div>{[['Avery Tan','admin@courtsupply.test','Administrator','You','Now'],['Jordan Lee','manager@courtsupply.test','Store manager','Active','Today'],['Siti Noor','siti@courtsupply.test','Store manager','Active','Yesterday'],['Ben Chua','ben@courtsupply.test','Store manager','Invited','—']].map(([name, mail, job, status, active]) => <div className="staff-row" key={mail}><span className="team-person"><i>{name.split(' ').map(n => n[0]).join('')}</i><span><strong>{name}</strong><small>{mail}</small></span></span><span>{job}</span><span><b className={`member-status ${status === 'Active' || status === 'You' ? 'member-active' : ''}`}>{status}</b></span><span>{active}</span></div>)}</div></section>}
-        {section === 'Settings' && admin && <section className="settings-grid"><section className="panel settings-panel"><h2>Store profile</h2><p>Manage your store details and customer-facing information.</p><label>Store name<input defaultValue="Court Supply"/></label><label>Support email<input type="email" defaultValue="hello@courtsupply.test"/></label><button className="solid-action" onClick={() => showToast('Store profile saved in this preview')}>Save changes</button></section><section className="panel settings-panel"><h2>Store preferences</h2><p>Regional details for your dashboard.</p><label>Currency<select defaultValue="MYR"><option>MYR</option><option>SGD</option><option>USD</option></select></label><label>Timezone<select defaultValue="Kuala Lumpur"><option>Kuala Lumpur</option><option>Singapore</option></select></label><button className="solid-action" onClick={() => showToast('Preferences saved in this preview')}>Save preferences</button></section></section>}
-        <footer className="admin-footer">Court Supply staff portal <span>UI preview · Store data is illustrative</span></footer>
-      </main>
-    </div>
-    {toast && <div className="admin-toast" role="status">✓ &nbsp;{toast}</div>}
+        {section === 'Orders' && <section className="panel table-panel"><PanelHeader title="All orders" subtitle={`${data.orders.length} recorded orders`} action="↓ Export CSV" onAction={!disabled ? exportReport : undefined}/><Search value={search} onChange={setSearch} label="Search order or customer"/>
+          <label className="admin-filter">Order status <select value={status} onChange={e => setStatus(e.target.value)}><option value="">All statuses</option>{['placed', 'shipped', 'delivered'].map(s => <option key={s}>{s}</option>)}</select></label>
+          <OrderTable orders={orders} disabled={disabled} onDetail={o => openDetail('orders', o.order_id)} onAdvance={advance}/></section>}
+        {section === 'Products' && <section className="panel table-panel"><PanelHeader title="Product catalog" subtitle={`${data.products.length} products, including inactive products`} action="+ Add product" onAction={!disabled ? () => editProduct() : undefined}/>
+          <div className="admin-toolbar"><button disabled={disabled} onClick={() => { setModalError(''); setModal({ kind: 'categories' }); }}>+ Category</button><button disabled={disabled} onClick={() => { setModalError(''); setModal({ kind: 'brands' }); }}>+ Brand</button></div>
+          <Search value={search} onChange={setSearch} label="Search products, brand or category"/>
+          <div className="admin-table-wrap"><table className="admin-live-table"><thead><tr><th>Product</th><th>Category / brand</th><th>Base price</th><th>Status</th><th>Manage</th></tr></thead><tbody>{products.map(p => <tr key={p.product_id}><td><strong>{p.name}</strong><small>#{p.product_id}</small></td><td>{p.category}<small>{p.brand}</small></td><td>{money(p.base_price_minor, p.currency)}</td><td>{p.is_active ? 'Active' : 'Inactive'}</td><td><div className="admin-row-actions"><button disabled={disabled} onClick={() => editProduct(p)}>Edit</button><button disabled={disabled} onClick={() => openDetail('products', p.product_id)}>Variants</button></div></td></tr>)}</tbody></table>{!products.length && <Empty/>}</div></section>}
+        {section === 'Inventory' && <section className="panel table-panel"><PanelHeader title="Variant inventory" subtitle="Stock updates require a reason and check for concurrent changes"/><Search value={search} onChange={setSearch} label="Search products, SKU, size or colour"/><InventoryTable rows={inventory} disabled={disabled} onAdjust={row => { setModalError(''); setModal({ kind: 'stock', value: row }); }} onHistory={row => openDetail('movements', row.variant_id)}/></section>}
+        <footer className="admin-footer">Court Supply staff portal <span>Changes are saved to your store database</span></footer>
+      </main></div>
+    {modal && <div className="admin-modal-backdrop" onClick={() => !busy && setModal(null)}><section className="admin-modal" role="dialog" aria-modal="true" aria-labelledby="admin-modal-title" onClick={e => e.stopPropagation()}>
+      <div className="admin-modal-heading"><h2 id="admin-modal-title">{modalTitle(modal)}</h2><button disabled={busy} aria-label="Close dialog" onClick={() => setModal(null)}>✕</button></div>
+      {modalError && <p className="admin-error" role="alert">{modalError}</p>}
+      {['product-form', 'variant-form', 'stock', 'categories', 'brands'].includes(modal.kind) && <form onSubmit={e => formSubmit(e, modal.kind, modal.value)} key={`${modal.kind}-${modal.value?.product_id || modal.value?.variant_id || 'new'}`}><fieldset disabled={busy}>
+        {modal.kind === 'product-form' && <ProductFields value={modal.value} categories={data.categories} brands={data.brands}/>}
+        {modal.kind === 'variant-form' && <VariantFields value={modal.value}/>}
+        {modal.kind === 'stock' && <><p>{modal.value.product_name} · {modal.value.size} / {modal.value.colour}</p><p>Current stock: {modal.value.quantity_on_hand}</p><label>New quantity<input name="quantity" type="number" required min="0" max="2147483647" step="1" defaultValue={modal.value.quantity_on_hand}/></label><label>Reason<input name="reason" required maxLength="80" placeholder="e.g. Supplier restock or stock count correction"/></label></>}
+        {['categories', 'brands'].includes(modal.kind) && <label>Name<input name="name" required maxLength={modal.kind === 'categories' ? 100 : 120}/></label>}
+        <button className="solid-action" disabled={busy || (modal.kind === 'product-form' && (!data.categories.length || !data.brands.length))}>{busy ? 'Saving…' : 'Save changes'}</button></fieldset></form>}
+      {modal.kind === 'products' && <><p>{modal.value.description}</p><button className="solid-action" disabled={busy} onClick={() => { setModalError(''); setModal({ kind: 'variant-form', value: null, productId: modal.id }); }}>+ Add variant</button><div className="admin-table-wrap"><table className="admin-live-table"><thead><tr><th>SKU</th><th>Size / colour</th><th>Price</th><th>Stock</th><th>Status</th><th/></tr></thead><tbody>{modal.value.variants.map(v => <tr key={v.variant_id}><td>{v.sku}</td><td>{v.size} / {v.colour}</td><td>{money(v.price_minor, modal.value.currency)}</td><td>{v.quantity_on_hand}</td><td>{v.is_active ? 'Active' : 'Inactive'}</td><td><button disabled={busy} onClick={() => { setModalError(''); setModal({ kind: 'variant-form', value: v, productId: modal.id }); }}>Edit</button></td></tr>)}</tbody></table>{!modal.value.variants.length && <Empty/>}</div></>}
+      {modal.kind === 'orders' && <OrderDetail order={modal.value} disabled={busy} onAdvance={advance}/>}
+      {modal.kind === 'movements' && <div className="admin-table-wrap"><table className="admin-live-table"><thead><tr><th>Date</th><th>Change</th><th>Reason</th><th>Order</th></tr></thead><tbody>{modal.value.map(m => <tr key={m.movement_id}><td>{date(m.created_at)}</td><td>{m.quantity_delta > 0 ? '+' : ''}{m.quantity_delta}</td><td>{m.reason}</td><td>{m.order_id || '—'}</td></tr>)}</tbody></table>{!modal.value.length && <Empty/>}<p>Most recent 50 movements.</p></div>}
+    </section></div>}
   </div>;
 }
 
-function Metric({ label, value, note, detail, icon }) { return <section className="metric-card"><div className="metric-top"><span>{label}</span><i>{icon}</i></div><strong className="metric-value">{value}</strong><div className="metric-note"><b>{note}</b> <span>{detail}</span></div></section>; }
-function PanelHeader({ title, subtitle, action, onAction }) { return <div className="panel-heading"><div><h2>{title}</h2><p>{subtitle}</p></div>{action && <button onClick={onAction} disabled={!onAction}>{action}</button>}</div>; }
-function OrderTable({ orders, onAdvance, role }) { return <div className="data-table"><div className="table-head"><span>ORDER</span><span>CUSTOMER</span><span>DATE</span><span>TOTAL</span><span>STATUS</span><span/></div>{orders.length ? orders.map(o => <div className="order-row" key={o.id}><span className="order-id">{o.id}</span><span className="customer-cell">{o.customer}<small>{o.items} item{o.items === 1 ? '' : 's'}</small></span><span>{o.date}</span><strong>{currency(o.total)}</strong><span><b className={`order-status status-${o.status.toLowerCase().replaceAll(' ', '-')}`}>{o.status}</b></span><button className="row-action" onClick={() => onAdvance(o.id)} disabled={o.status === 'Delivered' || (role === 'manager' && o.status === 'Shipped')}>{o.status === 'Delivered' || o.status === 'Shipped' ? '···' : 'Update'}</button></div>) : <p className="table-empty">No matching orders.</p>}</div>; }
-function ProductTable({ products }) { return <div className="data-table"><div className="table-head product-table-head"><span>PRODUCT</span><span>SKU</span><span>CATEGORY</span><span>PRICE</span><span>STATUS</span></div>{products.map(p => <div className="product-row" key={p.id}><span className="product-cell"><i>{p.category === 'Footwear' ? '👟' : p.category === 'Balls' ? '⚽' : '◈'}</i><strong>{p.name}</strong></span><span>{p.id}</span><span>{p.category}</span><span>{currency(p.price)}</span><span><b className={`product-status ${p.stock === 0 ? 'status-out' : p.stock <= 5 ? 'status-low' : ''}`}>{p.status}</b></span></div>)}</div>; }
-function InventoryTable({ products, onAdjust }) { return <div className="data-table"><div className="table-head inventory-table-head"><span>PRODUCT</span><span>SKU</span><span>ON HAND</span><span>STATUS</span><span>ADJUST</span></div>{products.map(p => <div className="inventory-row" key={p.id}><span className="product-cell"><i>{p.category === 'Footwear' ? '👟' : p.category === 'Balls' ? '⚽' : '◈'}</i><strong>{p.name}</strong></span><span>{p.id}</span><strong>{p.stock} units</strong><span><b className={`product-status ${p.stock === 0 ? 'status-out' : p.stock <= 5 ? 'status-low' : ''}`}>{p.stock === 0 ? 'Out of stock' : p.stock <= 5 ? 'Low stock' : 'In stock'}</b></span><span className="adjust-actions"><button aria-label={`Remove one ${p.name}`} onClick={() => onAdjust(p.id, -1)}>−</button><button aria-label={`Add one ${p.name}`} onClick={() => onAdjust(p.id, 1)}>+</button></span></div>)}</div>; }
-function SalesChart() { return <div className="chart-wrap"><div className="chart-y"><span>RM 800</span><span>RM 600</span><span>RM 400</span><span>RM 200</span><span>RM 0</span></div><div className="chart"><div className="chart-grid"><i/><i/><i/><i/><i/></div><svg viewBox="0 0 600 190" preserveAspectRatio="none" aria-label="Sales trend chart"><defs><linearGradient id="salesFill" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stopColor="#cbdba8" stopOpacity=".65"/><stop offset="1" stopColor="#cbdba8" stopOpacity="0"/></linearGradient></defs><path className="sales-area" d="M0 148 C38 138 53 150 91 127 S153 132 182 99 S241 115 274 90 S333 107 365 73 S423 91 456 61 S516 70 548 37 S578 49 600 19 L600 190 L0 190 Z"/><path className="sales-line" d="M0 148 C38 138 53 150 91 127 S153 132 182 99 S241 115 274 90 S333 107 365 73 S423 91 456 61 S516 70 548 37 S578 49 600 19"/></svg><div className="chart-x"><span>Mon</span><span>Tue</span><span>Wed</span><span>Thu</span><span>Fri</span><span>Sat</span><span>Sun</span></div></div></div>; }
+function modalTitle(modal) {
+  return ({ 'product-form': modal.value ? 'Edit product' : 'Add product', 'variant-form': modal.value ? 'Edit variant' : 'Add variant', stock: 'Adjust stock', categories: 'Add category', brands: 'Add brand', products: modal.value?.name, orders: 'Order details', movements: 'Stock movement history' })[modal.kind];
+}
+function Metric({ label, value, detail }) { return <section className="metric-card"><div className="metric-top"><span>{label}</span></div><strong className="metric-value">{value}</strong><div className="metric-note">{detail}</div></section>; }
+function PanelHeader({ title, subtitle, action, onAction }) { return <div className="panel-heading"><div><h2>{title}</h2>{subtitle && <p>{subtitle}</p>}</div>{action && <button disabled={!onAction} onClick={onAction}>{action}</button>}</div>; }
+function Search({ value, onChange, label }) { return <label className="table-search">⌕<input value={value} onChange={e => onChange(e.target.value)} placeholder={label} aria-label={label}/></label>; }
+function Empty() { return <p className="table-empty">No matching records.</p>; }
+function OrderTable({ orders, disabled, onDetail, onAdvance }) {
+  return <div className="admin-table-wrap"><table className="admin-live-table"><thead><tr><th>Order</th><th>Customer</th><th>Created</th><th>Total</th><th>Status</th><th>Manage</th></tr></thead><tbody>{orders.map(o => <tr key={o.order_id}><td title={o.order_id}>{o.order_id.slice(0, 8)}</td><td>{o.delivery_name}</td><td>{date(o.created_at)}</td><td>{money(o.total_minor, o.currency)}</td><td>{o.status}</td><td><div className="admin-row-actions"><button disabled={disabled} onClick={() => onDetail(o)}>Details</button>{nextStatus[o.status] && <button disabled={disabled} onClick={() => onAdvance(o)}>Mark {nextStatus[o.status]}</button>}</div></td></tr>)}</tbody></table>{!orders.length && <Empty/>}</div>;
+}
+function InventoryTable({ rows, disabled, onAdjust, onHistory }) {
+  return <div className="admin-table-wrap"><table className="admin-live-table"><thead><tr><th>Product / variant</th><th>SKU</th><th>On hand</th><th>Status</th><th>Manage</th></tr></thead><tbody>{rows.map(i => <tr key={i.variant_id}><td><strong>{i.product_name}</strong><small>{i.size} / {i.colour}</small></td><td>{i.sku}</td><td>{i.quantity_on_hand}</td><td>{!i.is_active || !i.product_is_active ? 'Inactive' : i.quantity_on_hand === 0 ? 'Out of stock' : i.quantity_on_hand <= 5 ? 'Low stock' : 'In stock'}</td><td><div className="admin-row-actions"><button disabled={disabled} onClick={() => onAdjust(i)}>Adjust</button><button disabled={disabled} onClick={() => onHistory(i)}>History</button></div></td></tr>)}</tbody></table>{!rows.length && <Empty/>}</div>;
+}
+function ProductFields({ value: p, categories, brands }) {
+  return <><label>Name<input name="name" required maxLength="180" defaultValue={p?.name || ''}/></label><label>Description<textarea name="description" maxLength="5000" defaultValue={p?.description || ''}/></label><label>Category<select name="category_id" required defaultValue={p?.category_id || ''}><option value="" disabled>Select category</option>{categories.map(c => <option key={c.category_id} value={c.category_id}>{c.name}</option>)}</select></label><label>Brand<select name="brand_id" required defaultValue={p?.brand_id || ''}><option value="" disabled>Select brand</option>{brands.map(b => <option key={b.brand_id} value={b.brand_id}>{b.name}</option>)}</select></label>{(!categories.length || !brands.length) && <p>Create a category and brand before adding a product.</p>}<label>Base price (major units, e.g. 299.00)<input name="price" type="number" required min="0" step="0.01" defaultValue={p ? (p.base_price_minor / 100).toFixed(2) : ''}/></label><label>Currency<input name="currency" required pattern="[A-Z]{3}" maxLength="3" defaultValue={p?.currency || 'MYR'}/></label><label>Image URL<input name="image_url" type="url" maxLength="2048" defaultValue={p?.image_url || ''}/></label><label className="admin-checkbox"><input type="checkbox" name="is_active" defaultChecked={p?.is_active ?? true}/>Active</label></>;
+}
+function VariantFields({ value: v }) {
+  return <><label>SKU<input name="sku" required maxLength="80" defaultValue={v?.sku || ''}/></label><label>Size<input name="size" required maxLength="40" defaultValue={v?.size || ''}/></label><label>Colour<input name="colour" required maxLength="60" defaultValue={v?.colour || ''}/></label><label>Price (major units)<input name="price" type="number" min="0" step="0.01" required defaultValue={v ? (v.price_minor / 100).toFixed(2) : ''}/></label><label className="admin-checkbox"><input name="is_active" type="checkbox" defaultChecked={v?.is_active ?? true}/>Active</label></>;
+}
+function OrderDetail({ order: o, disabled, onAdvance }) {
+  return <><p><strong>{o.order_id}</strong></p><p>{o.delivery_name} · {o.customer_email}</p><p style={{ whiteSpace: 'pre-wrap' }}>{o.delivery_address}</p><p>Status: <strong>{o.status}</strong></p><div className="admin-table-wrap"><table className="admin-live-table"><thead><tr><th>Item</th><th>Variant</th><th>Quantity</th><th>Unit price</th><th>Total</th></tr></thead><tbody>{o.items.map(i => <tr key={i.order_item_id}><td>{i.product_name_snapshot}</td><td>{i.size_snapshot} / {i.colour_snapshot}</td><td>{i.quantity}</td><td>{money(i.unit_price_minor, o.currency)}</td><td>{money(i.line_total_minor, o.currency)}</td></tr>)}</tbody></table></div><p>Subtotal: {money(o.subtotal_minor, o.currency)} · Shipping: {money(o.shipping_minor, o.currency)} · Tax: {money(o.tax_minor, o.currency)}</p><p><strong>Total: {money(o.total_minor, o.currency)}</strong></p>{nextStatus[o.status] && <button className="solid-action" disabled={disabled} onClick={() => onAdvance(o)}>Mark {nextStatus[o.status]}</button>}<h3>Status history</h3><ul>{o.status_history.map(h => <li key={h.history_id}>{date(h.changed_at)} · {h.old_status || 'New order'} → {h.new_status}</li>)}</ul></>;
+}

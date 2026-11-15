@@ -12,6 +12,7 @@ from pydantic import BaseModel, Field
 from .admin import router as admin_router
 from .auth import router as auth_router
 from .catalog import router as catalog_router
+from .customer_orders import router as customer_orders_router
 
 DB_PATH = Path(os.getenv("DATABASE_PATH", "store.db"))
 PRODUCTS = [
@@ -129,6 +130,7 @@ app.add_middleware(
 app.include_router(auth_router)
 app.include_router(admin_router)
 app.include_router(catalog_router)
+app.include_router(customer_orders_router)
 
 
 class OrderItem(BaseModel):

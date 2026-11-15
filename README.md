@@ -1,6 +1,6 @@
 # Court Supply — Futsal Gear Store
 
-A local e-commerce starter using Python/FastAPI and React/Vite. Authentication and the public catalog API use PostgreSQL. The React demo and its checkout use SQLite. PostgreSQL migrations also define inventory, orders, and audit history.
+A local e-commerce starter using Python/FastAPI and React/Vite. Authentication, the client storefront catalog, and signed-in checkout use PostgreSQL. The original SQLite demo endpoints remain available separately. PostgreSQL migrations also define inventory, orders, and audit history.
 
 ## Requirements
 
@@ -34,7 +34,7 @@ To roll back the initial schema:
 .venv/bin/alembic downgrade base
 ```
 
-The initial migration creates role, user, category, brand, product, product variant, inventory, order, order item, order status history, and inventory movement tables. It seeds the `customer`, `manager`, and `administrator` roles. Inventory is one-to-one with a product variant, so every size/colour/SKU combination has its own stock row. For checkout, the API must lock or conditionally update the inventory row and insert the order, order items, and inventory movement records in the same PostgreSQL transaction; this migration defines the data model but does not implement that API behavior.
+The initial migration creates role, user, category, brand, product, product variant, inventory, order, order item, order status history, and inventory movement tables. It seeds the `customer`, `manager`, and `administrator` roles. Inventory is one-to-one with a product variant, so every size/colour/SKU combination has its own stock row. Signed-in checkout locks inventory per variant and writes the order, order items, stock movements, and initial status history in one PostgreSQL transaction.
 
 If you prefer pgAdmin, open `backend/migrations/sql/0001_initial_erd.sql` in the Query Tool while connected to `futsal_gear_store` and execute it. Use either the SQL file or Alembic on an empty database, not both. This creates the schema and role rows; it does not import old SQLite products because that catalog has no brand, SKU, size, or colour data to fill the new required fields.
 
@@ -69,12 +69,12 @@ Set `DATABASE_URL` to the PostgreSQL instance where you applied the schema and s
 | --- | --- |
 | `GET /api/categories` | Category IDs and names |
 | `GET /api/brands` | Brand IDs and names |
-| `GET /api/products` | Active products with category, brand, base price, image, and availability |
+| `GET /api/products` | Active products with category, brand, base price, image, availability, and active size/colour variants with prices and stock |
 | `GET /api/products/{product_id}` | Product details and active variants with SKU, size, colour, price, and stock |
 
 Try `GET /api/products?search=lunar&category_id=1&brand_id=1&page=1&page_size=5` with the sample data. Search matches part of a name or description without regard to case. Filters combine, and the response includes `total`, `page`, and `page_size`. The default page size is 20 and the maximum is 100. Use a `product_id` from the list to request details. Missing or inactive products return `404`. An active variant with zero stock remains visible.
 
-Prices use integer minor units in the product's currency. For MYR, `29900` means RM299.00. The React demo reads `GET /api/demo/products` and checks out against SQLite through `POST /api/orders`. Use the demo product IDs for that checkout.
+Prices use integer minor units in the product's currency. For MYR, `29900` means RM299.00. The React home/shop pages read `GET /api/products` and use PostgreSQL variant IDs in a separate `court-variant-cart` local storage key. Choose a size/colour before adding an item. The original `GET /api/demo/products` and `POST /api/orders` endpoints still use SQLite and are not used by the storefront.
 
 ## Test authentication with Postman
 
@@ -141,13 +141,34 @@ Use `http://127.0.0.1:8000` as the base URL and set **Authorization → Bearer T
 | `GET /api/admin/orders/{order_id}` | Order totals, delivery details, item snapshots, and status history. |
 | `PATCH /api/admin/orders/{order_id}/status` | Send `{"status":"shipped"}`, then `{"status":"delivered"}`. Skipping stages or moving backwards returns `409`. Repeating the current status returns `200` without adding a history entry. |
 
-Product and variant deactivation preserves existing orders. PostgreSQL orders appear in the admin API. The React demo checkout still creates SQLite orders.
+Product and variant deactivation preserves existing orders. PostgreSQL orders appear in the admin API. Orders placed through the storefront checkout appear in the admin dashboard.
+
+### Admin dashboard
+
+Open `http://localhost:5173/admin` and sign in with a manager or administrator account. The dashboard uses the signed-in bearer token for all `/api/admin` requests. Both roles can use the operations allowed by the backend; customer accounts are rejected.
+
+- **Products:** view all products, including inactive ones; create/edit products, categories, and brands; open Variants to create/edit SKUs, sizes, colours, prices, and active status. New variants start at zero stock.
+- **Orders:** search/filter orders, view delivery details, items, and status history, and mark orders shipped or delivered. Export CSV downloads all loaded orders.
+- **Inventory:** search individual variants, set a new quantity with an adjustment reason, and inspect the most recent 50 stock movements. A concurrent change returns a conflict and refreshes inventory so you can retry against current stock.
+- **Overview:** counts, low-stock variants, recent orders, and recorded order values come from the database. Order values are grouped by currency and do not represent collected payments.
+
+Lists load all API pages. Use Refresh to pick up changes from other staff or checkout. Saves refresh the dashboard; failures show the API error. Expired tokens log out and return to the home page. Staff/role management and store settings are not shown because those APIs are not implemented.
 
 ## Frontend
 
 The account dialog calls the PostgreSQL registration and login APIs. Signup requires a 12–128 character password; after registration, log in to start a session. The access token stays in session storage for the current tab, and `/api/auth/me` restores the account after a reload. Log out clears the token. Configure `DATABASE_URL` and `AUTH_SECRET_KEY` as described above before testing accounts. SQL seed accounts have disabled passwords; register a new account through the UI.
 
-The signed-in name and email prefill checkout. Checkout still uses the guest SQLite order API and does not associate orders with the PostgreSQL account.
+The signed-in name and email prefill checkout. Placing an order requires login and calls `POST /api/customer/orders` with a bearer token. The account supplies the customer identity; the request contains `customer_name`, `address`, and `items` with `variant_id` and `quantity`. Prices and totals come from the database. Orders have zero shipping/tax for this demo and are recorded with status `placed`.
+
+```json
+{
+  "customer_name": "Daniel Tan",
+  "address": "123 Test Street, Kuala Lumpur",
+  "items": [{ "variant_id": 3, "quantity": 1 }]
+}
+```
+
+Insufficient stock returns `409`; unavailable variants return `404`; missing/expired login returns `401`. No payment is taken. Cart quantity changes are local; stock is reserved when the order is placed.
 
 In another terminal, from the project root:
 
@@ -164,7 +185,7 @@ Open http://localhost:5173. Vite proxies `/api` requests to the backend on port 
 Frontend API request and error handling checks:
 
 ```sh
-node --test frontend/tests/api.test.js
+node --test frontend/tests/*.test.js
 ```
 
 ```sh
@@ -181,8 +202,10 @@ npm run build
 
 The backend reads `DATABASE_PATH` (default `store.db` in its working directory) and `CORS_ORIGINS` (comma-separated allowed frontend origins) from the process environment. `.env.example` files document configuration; the backend and Alembic automatically load `backend/.env`; exported environment variables take precedence. Startup seeds a new SQLite database and migrates existing catalogs in place.
 
-The SQLite demo upgrades older products to one `One Size` variant each, keeping their product IDs, prices, and stock. The demo storefront and checkout use the variant with the lowest ID for each product.
+The SQLite demo upgrades older products to one `One Size` variant each, keeping their product IDs, prices, and stock. The legacy SQLite demo checkout uses the variant with the lowest ID for each product.
 
 The frontend accepts `VITE_API_URL` for a separately hosted backend; set it before building. The Vite proxy is for development only. Serve `frontend/dist` with a static host and deploy FastAPI separately, or configure your production reverse proxy to forward `/api` to FastAPI. Use persistent storage for the SQLite database.
 
-This is a development starter. Checkout records a demo order and reduces inventory; it does not charge money, send email, or arrange shipping. Product illustrations are emoji placeholders. Before accepting real customers, add payment-provider integration, authenticated checkout and an admin workflow, shipping/tax rules, rate limits, and an appropriate privacy and data-retention policy. The public API intentionally has no order-list endpoint. Fonts use Google Fonts with local fallbacks.
+This is a development starter. Checkout records a demo order and reduces inventory; it does not charge money, send email, or arrange shipping. Product illustrations are emoji placeholders. Before accepting real customers, add payment-provider integration, shipping/tax rules, rate limits, and an appropriate privacy and data-retention policy. The public API intentionally has no order-list endpoint. Fonts use Google Fonts with local fallbacks.
+
+PostgreSQL catalog/checkout integration tests use an isolated schema per test. To run them, set `TEST_DATABASE_URL` to a disposable UTF-8 PostgreSQL database and run the backend test command above. They check public visibility, variant prices, audit records, transaction rollback, and concurrent requests for the last item. Without that variable these integration tests are skipped.
