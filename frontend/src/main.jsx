@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client';
 import './style.css';
 import { request, storedToken, storeToken } from './api.js';
 import AdminDashboard from './AdminDashboard.jsx';
+import OrderHistory from './OrderHistory.jsx';
 import { loadCatalog } from './catalog.js';
 
 const money = (cents, currency = "MYR") =>
@@ -290,17 +291,20 @@ function ContactPage({ onHome, feedback, onSubmit }) {
   );
 }
 
-const pageFromPath = (path) =>
-  ({
-    "/shop": "shop",
-    "/admin": "admin",
-    "/about": "about",
-    "/contact": "contact",
-  })[path] || "home";
+const pagePaths = {
+  home: "/",
+  shop: "/shop",
+  admin: "/admin",
+  about: "/about",
+  contact: "/contact",
+  orders: "/orders",
+};
+
 function App() {
-  const [page, setPage] = useState(() =>
-    pageFromPath(window.location.pathname),
-  );
+  const [path, setPath] = useState(() => window.location.pathname);
+  const orderId = path.match(/^\/orders\/([^/]+)\/?$/)?.[1];
+  const page = orderId ? "orders" : Object.keys(pagePaths).find((name) => pagePaths[name] === path) || "home";
+  const [confirmedOrderId, setConfirmedOrderId] = useState(null);
   const [products, setProducts] = useState([]);
   const [category, setCategory] = useState("All gear");
   const [query, setQuery] = useState("");
@@ -367,8 +371,9 @@ function App() {
     setError("");
     setCategory("All gear");
     setQuery("");
+    setConfirmedOrderId(null);
     window.history.replaceState({}, "", "/");
-    setPage("home");
+    setPath("/");
     window.scrollTo({ top: 0, behavior: "instant" });
     setNotice("You have logged out.");
   }
@@ -387,7 +392,7 @@ function App() {
     load();
   }, []);
   useEffect(() => {
-    const onPopState = () => setPage(pageFromPath(window.location.pathname));
+    const onPopState = () => setPath(window.location.pathname);
     window.addEventListener("popstate", onPopState);
     return () => window.removeEventListener("popstate", onPopState);
   }, []);
@@ -415,21 +420,20 @@ function App() {
       p.name.toLowerCase().includes(query.toLowerCase()),
   );
   const featuredProducts = products.filter((p) => p.stock > 0).slice(0, 5);
-  function navigate(nextPage) {
-    const path =
-      { shop: "/shop", admin: "/admin", about: "/about", contact: "/contact" }[
-        nextPage
-      ] || "/";
-    if (window.location.pathname !== path)
-      window.history.pushState({}, "", path);
-    setPage(nextPage);
+  function navigate(nextPage, nextOrderId) {
+    const nextPath = nextPage === "orders" && nextOrderId
+      ? `/orders/${nextOrderId}`
+      : pagePaths[nextPage];
+    if (window.location.pathname !== nextPath)
+      window.history.pushState({}, "", nextPath);
+    setPath(nextPath);
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
   function navigateToSection(id) {
     if (page !== "home") {
       if (window.location.pathname !== "/")
         window.history.pushState({}, "", "/");
-      setPage("home");
+      setPath("/");
       window.setTimeout(
         () =>
           document.getElementById(id)?.scrollIntoView({ behavior: "smooth" }),
@@ -495,9 +499,9 @@ function App() {
       });
       setCart({});
       setOpen(false);
-      setNotice(
-        `Order ${data.order_id.slice(0, 8)} received. Total: ${money(data.total_minor, data.currency)}. No payment has been taken.`,
-      );
+      setNotice("");
+      setConfirmedOrderId(data.order_id);
+      navigate("orders", data.order_id);
       await load();
     } catch (err) {
       if (err.status === 401) {
@@ -626,6 +630,18 @@ function App() {
           {user ? (
             <>
               <span className="account-name">{user.full_name}</span>
+              <a
+                className="account-button orders-link"
+                href="/orders"
+                aria-current={page === "orders" ? "page" : undefined}
+                onClick={(event) => {
+                  if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+                  event.preventDefault();
+                  navigate("orders");
+                }}
+              >
+                My orders
+              </a>
               <button className="account-button" onClick={logout}>
                 Log out
               </button>
@@ -654,7 +670,31 @@ function App() {
             {sessionError}
           </p>
         )}
-        {page === "home" ? (
+        {page === "orders" ? (
+          <OrderHistory
+            key={`${path}:${user?.user_id || ""}`}
+            user={user}
+            token={token}
+            sessionLoading={sessionLoading}
+            orderId={orderId}
+            confirmed={confirmedOrderId === orderId}
+            formatMoney={money}
+            onLogin={(expired) => {
+              if (expired) {
+                storeToken("");
+                setToken("");
+                setUser(null);
+                setConfirmedOrderId(null);
+              }
+              setAuthMode("login");
+              setAuthFeedback("");
+              setAuthOpen(true);
+            }}
+            onShop={() => navigate("shop")}
+            onHistory={() => navigate("orders")}
+            onOpenOrder={(id) => navigate("orders", id)}
+          />
+        ) : page === "home" ? (
           <>
             <section className="hero">
               <div className="hero-copy">

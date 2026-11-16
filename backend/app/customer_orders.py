@@ -1,13 +1,22 @@
-"""Checkout for the public PostgreSQL catalog, with per-variant stock locking."""
+"""Signed-in checkout and order history."""
 from typing import Annotated
-from uuid import uuid4
+from uuid import UUID, uuid4
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Response
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 from sqlalchemy import text
 
 from .auth import AuthDB, CurrentUser
-from .catalog import MAX_POSTGRES_ID
+from .catalog import MAX_POSTGRES_ID, PageNumber, PageSize
+from .order_records import (
+    ORDER_FIELDS,
+    STATUS_HISTORY_FIELDS,
+    OrderItem,
+    OrderPage,
+    OrderStatusEntry,
+    OrderSummary,
+    order_items,
+)
 
 router = APIRouter(prefix='/api/customer/orders', tags=['Customer orders'])
 
@@ -23,6 +32,56 @@ class CheckoutRequest(BaseModel):
     customer_name: Annotated[str, StringConstraints(strip_whitespace=True, min_length=2, max_length=160)]
     address: Annotated[str, StringConstraints(strip_whitespace=True, min_length=5, max_length=500)]
     items: list[CheckoutItem] = Field(min_length=1, max_length=100)
+
+
+class CustomerOrderDetail(OrderSummary):
+    delivery_address: str
+    items: list[OrderItem]
+    status_history: list[OrderStatusEntry]
+
+
+@router.get('', response_model=OrderPage)
+def list_orders(db: AuthDB, user: CurrentUser, response: Response, page: PageNumber = 1, page_size: PageSize = 20):
+    response.headers['Cache-Control'] = 'private, no-store'
+    params = {'customer_id': user.user_id}
+    total = db.execute(
+        text('SELECT COUNT(*) FROM orders WHERE customer_id = :customer_id'),
+        params,
+    ).scalar_one()
+    offset = (page - 1) * page_size
+    orders = []
+    if offset < total:
+        orders = db.execute(
+            text(f'''
+                SELECT {ORDER_FIELDS} FROM orders WHERE customer_id = :customer_id
+                ORDER BY created_at DESC, order_id DESC LIMIT :limit OFFSET :offset
+            '''),
+            {**params, 'limit': page_size, 'offset': offset},
+        ).mappings().all()
+    return {'orders': orders, 'total': total, 'page': page, 'page_size': page_size}
+
+
+@router.get('/{order_id}', response_model=CustomerOrderDetail)
+def get_order(db: AuthDB, user: CurrentUser, response: Response, order_id: UUID):
+    response.headers['Cache-Control'] = 'private, no-store'
+    params = {'order_id': order_id, 'customer_id': user.user_id}
+    order = db.execute(
+        text(f'''
+            SELECT {ORDER_FIELDS}, delivery_address
+            FROM orders WHERE order_id = :order_id AND customer_id = :customer_id FOR SHARE
+        '''),
+        params,
+    ).mappings().one_or_none()
+    if order is None:
+        raise HTTPException(404, 'Order not found', headers={'Cache-Control': 'private, no-store'})
+    history = db.execute(
+        text(f'''
+            SELECT {STATUS_HISTORY_FIELDS}
+            FROM order_status_history WHERE order_id = :order_id ORDER BY changed_at, history_id
+        '''),
+        {'order_id': order_id},
+    ).mappings().all()
+    return {**order, 'items': order_items(db, order_id), 'status_history': history}
 
 
 @router.post('', status_code=201)
