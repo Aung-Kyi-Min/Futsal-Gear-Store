@@ -353,7 +353,7 @@ export default function AdminDashboard({ user, token, sessionLoading = false, on
                 onAction={!disabled ? () => editProduct() : undefined}
               />
               <div className="admin-toolbar">
-                <button
+                <button class="btn btn-sm btn-outline-primary"
                   disabled={disabled}
                   onClick={() => {
                     setModalError("");
