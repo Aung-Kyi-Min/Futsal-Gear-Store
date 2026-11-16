@@ -160,6 +160,10 @@ The account dialog calls the PostgreSQL registration and login APIs. Signup requ
 
 The signed-in name and email prefill checkout. Placing an order requires login and calls `POST /api/customer/orders` with a bearer token. The account supplies the customer identity; the request contains `customer_name`, `address`, and `items` with `variant_id` and `quantity`. Prices and totals come from the database. Orders have zero shipping/tax for this demo and are recorded with status `placed`.
 
+After checkout, the store opens the new order's details. Select **My orders** in the header to view past orders and their current status. Each order shows purchased items, totals, delivery information, and status updates.
+
+In Postman, send `GET /api/customer/orders?page=1&page_size=20` with the customer's bearer token. Copy an `order_id` and send `GET /api/customer/orders/{order_id}` with the same token. History is scoped to the signed-in customer. Another customer's order returns `404`, and requests without a valid token return `401`.
+
 ```json
 {
   "customer_name": "Daniel Tan",

@@ -95,6 +95,44 @@ class ClientCatalogTest(unittest.TestCase):
             self.assertEqual(db.execute(text('SELECT sum(quantity_delta) FROM inventory_movements WHERE order_id=:id'), {'id': order_id}).scalar_one(), -2)
             self.assertEqual(db.execute(text('SELECT new_status FROM order_status_history WHERE order_id=:id'), {'id': order_id}).scalar_one(), 'placed')
 
+    def test_order_history_is_private_and_shows_checkout_and_staff_updates(self):
+        with self.engine.begin() as db:
+            db.execute(text("UPDATE orders SET created_at = CURRENT_TIMESTAMP - INTERVAL '1 day'"))
+        checkout = self.order([{'variant_id': 3, 'quantity': 2}])
+        self.assertEqual(checkout.status_code, 201, checkout.text)
+        order_id = checkout.json()['order_id']
+        order_path = f'/api/customer/orders/{order_id}'
+        listing = self.client.get('/api/customer/orders?page_size=1')
+        self.assertEqual(listing.status_code, 200, listing.text)
+        self.assertEqual(listing.headers['cache-control'], 'private, no-store')
+        self.assertEqual(listing.json()['total'], 3)
+        self.assertEqual([order['order_id'] for order in listing.json()['orders']], [order_id])
+        second_page = self.client.get('/api/customer/orders?page_size=1&page=2').json()
+        self.assertNotEqual(second_page['orders'][0]['order_id'], order_id)
+
+        customer = self.user
+        self.user = PublicUser(user_id='10000000-0000-4000-8000-000000000001',
+                               full_name='Amir Hakim', email='amir.admin@example.com', role='administrator')
+        status = self.client.patch(f'/api/admin/orders/{order_id}/status', json={'status': 'processing'})
+        self.assertEqual(status.status_code, 200, status.text)
+        self.assertEqual(self.client.get(order_path).status_code, 404)
+        self.assertEqual(self.client.get('/api/customer/orders').json()['orders'], [])
+
+        self.user = customer
+        detail = self.client.get(order_path)
+        self.assertEqual(detail.status_code, 200, detail.text)
+        order = detail.json()
+        self.assertEqual(order['total_minor'], 69800)
+        self.assertEqual(order['delivery_address'], '123 Test Street, Kuala Lumpur')
+        self.assertEqual(order['items'][0]['product_name_snapshot'], 'Lunar Gato II')
+        self.assertEqual(order['items'][0]['quantity'], 2)
+        self.assertEqual([event['new_status'] for event in order['status_history']], ['placed', 'processing'])
+        self.assertNotIn('changed_by_user_id', order['status_history'][1])
+
+        main.app.dependency_overrides.pop(get_current_user)
+        self.assertEqual(self.client.get('/api/customer/orders').status_code, 401)
+        self.assertEqual(self.client.get(order_path).status_code, 401)
+
     def test_stock_failure_creates_no_order_or_partial_deduction(self):
         with self.engine.connect() as db:
             before = db.execute(text('SELECT count(*) FROM orders')).scalar_one()
