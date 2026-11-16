@@ -2,11 +2,12 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { request } from './api.js';
 import { adminPages, ordersCsv, productPayload, stockPayload, variantPayload } from './adminApi.js';
 import './admin.css';
+import AdminManagement from './AdminManagement.jsx';
 
 const money = (minor, currency = 'MYR') => new Intl.NumberFormat('en-MY', { style: 'currency', currency }).format(minor / 100);
 const date = value => new Intl.DateTimeFormat('en-MY', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'Asia/Kuala_Lumpur' }).format(new Date(value));
-const nextStatus = { placed: 'shipped', shipped: 'delivered' };
-const emptyData = { products: [], orders: [], inventory: [], categories: [], brands: [] };
+const nextStatus = { placed: 'processing', processing: 'shipped', shipped: 'delivered' };
+const emptyData = { products: [], orders: [], inventory: [], categories: [], brands: [], managers: [], activity: [], settings: null };
 const sections = [['Overview', '◫'], ['Orders', '↗'], ['Products', '◇'], ['Inventory', '▤']];
 
 export default function AdminDashboard({ user, token, sessionLoading = false, onLogin, onLogout, onExit }) {
@@ -29,6 +30,9 @@ export default function AdminDashboard({ user, token, sessionLoading = false, on
   logoutRef.current = onLogout;
   const generation = useRef(0);
   const controller = useRef(null);
+  const isAdmin = user?.role === 'administrator';
+  const navigation = isAdmin ? [['Overview', '◫'], ['Managers', '♙'], ['Activity', '◷'], ['Settings', '⚙']] : sections;
+  const currentSection = navigation.some(([label]) => label === section) ? section : 'Overview';
   const staff = ['manager', 'administrator'].includes(user?.role);
 
   const reload = useCallback(async () => {
@@ -38,17 +42,26 @@ export default function AdminDashboard({ user, token, sessionLoading = false, on
     const signal = controller.current.signal;
     setLoading(true); setError('');
     try {
+      if (isAdmin) {
+        const [managers, activity, settings] = await Promise.all([
+          request('/api/admin/managers', { token, signal }),
+          request('/api/admin/activity', { token, signal }),
+          request('/api/admin/settings', { token, signal }),
+        ]);
+        if (version === generation.current) setData({ ...emptyData, managers, activity, settings });
+        return;
+      }
       const [products, orders, inventory, categories, brands] = await Promise.all([
         adminPages('products', token, signal), adminPages('orders', token, signal),
         adminPages('inventory', token, signal), request('/api/categories', { signal }), request('/api/brands', { signal }),
       ]);
-      if (version === generation.current) setData({ products, orders, inventory, categories, brands });
+      if (version === generation.current) setData({ ...emptyData, products, orders, inventory, categories, brands });
     } catch (err) {
       if (version !== generation.current) return;
       if (err.status === 401) { logoutRef.current(); return; }
       setError(err.message); setData(emptyData);
     } finally { if (version === generation.current) setLoading(false); }
-  }, [token]);
+  }, [token, isAdmin]);
 
   useEffect(() => {
     if (staff && token && !sessionLoading) reload();
@@ -98,7 +111,9 @@ export default function AdminDashboard({ user, token, sessionLoading = false, on
     event.preventDefault();
     const values = Object.fromEntries(new FormData(event.currentTarget));
     try {
-      if (kind === 'product-form') {
+      if (kind === 'manager-form') {
+        mutate('managers', 'POST', values, 'Manager account created.');
+      } else if (kind === 'product-form') {
         mutate(value ? `products/${value.product_id}` : 'products', value ? 'PATCH' : 'POST', productPayload(values), 'Product saved.');
       } else if (kind === 'variant-form') {
         const path = `products/${modal.productId}/variants${value ? '/' + value.variant_id : ''}`;
@@ -141,15 +156,15 @@ export default function AdminDashboard({ user, token, sessionLoading = false, on
   return <div className={`admin-shell role-${user.role}`}>
     <aside className="admin-sidebar"><a className="admin-brand" href="/" onClick={e => { e.preventDefault(); onExit(); }}>◈ COURT<span>SUPPLY</span></a>
       <div className="admin-workspace"><span className="workspace-mark">C</span><span><strong>Store operations</strong><small>{user.role === 'administrator' ? 'Administrator' : 'Manager'} workspace</small></span></div>
-      <p className="admin-nav-label">WORKSPACE</p><nav className="admin-nav">{sections.map(([label, icon]) => <button key={label} className={section === label ? 'selected' : ''} disabled={busy} onClick={() => switchSection(label)}><span>{icon}</span>{label}{label === 'Orders' && <i>{data.orders.filter(o => o.status === 'placed').length}</i>}</button>)}</nav>
+      <p className="admin-nav-label">WORKSPACE</p><nav className="admin-nav">{navigation.map(([label, icon]) => <button key={label} className={currentSection === label ? 'selected' : ''} disabled={busy} onClick={() => switchSection(label)}><span>{icon}</span>{label}{label === 'Orders' && <i>{data.orders.filter(o => o.status === 'placed').length}</i>}</button>)}</nav>
       <div className="sidebar-bottom"><button className="store-link" onClick={onExit}>↗ View storefront</button><small>PostgreSQL store management</small></div></aside>
-    <div className="admin-main"><header className="admin-topbar"><div className="breadcrumb">Store / <strong>{section}</strong></div><div className="topbar-actions"><span>{user.full_name}</span><button className="outline-action" onClick={onLogout}>Log out</button></div></header>
-      <main className="admin-content"><div className="admin-page-heading"><div><p className="staff-kicker">STAFF WORKSPACE</p><h1>{section}</h1><p>Manage your store products, orders, and variant stock.</p></div><button className="outline-action" disabled={loading || busy} onClick={reload}>↻ Refresh</button></div>
+    <div className="admin-main"><header className="admin-topbar"><div className="breadcrumb">Store / <strong>{currentSection}</strong></div><div className="topbar-actions"><span>{user.full_name}</span><button className="outline-action" onClick={onLogout}>Log out</button></div></header>
+      <main className="admin-content"><div className="admin-page-heading"><div><p className="staff-kicker">{isAdmin ? 'ADMINISTRATION' : 'MANAGER WORKSPACE'}</p><h1>{currentSection}</h1><p>{isAdmin ? 'Manage your team, review activity, and keep shop details up to date.' : 'Manage products, sizes, colours, pricing, stock, and customer orders.'}</p></div><button className="outline-action" disabled={loading || busy} onClick={reload}>↻ Refresh</button></div>
         {error && <p className="admin-error" role="alert">{error} <button onClick={reload} disabled={loading || busy}>Reload data</button></p>}
         {notice && <p className="admin-notice" role="status">{notice}</p>}
         {(loading || detailLoading) && <p role="status">{loading ? 'Loading store data…' : 'Loading details…'}</p>}
         {busy && <p role="status">Saving changes…</p>}
-        {section === 'Overview' && <>
+        {!isAdmin && currentSection === 'Overview' && <>
           <div className="dashboard-cards"><Metric label="Order value" value={Object.entries(sales).map(([c, total]) => money(total, c)).join(' / ') || '—'} detail="All recorded orders; not payment revenue"/>
             <Metric label="Orders" value={data.orders.length} detail={`${data.orders.filter(o => o.status !== 'delivered').length} awaiting delivery`}/>
             <Metric label="Products" value={data.products.length} detail={`${data.products.filter(p => p.is_active).length} active products`}/>
@@ -157,21 +172,23 @@ export default function AdminDashboard({ user, token, sessionLoading = false, on
           <section className="panel table-panel"><PanelHeader title="Recent orders" action="View orders →" onAction={() => switchSection('Orders')}/><OrderTable orders={data.orders.slice(0, 5)} disabled={disabled} onDetail={o => openDetail('orders', o.order_id)} onAdvance={advance}/></section>
           <section className="panel table-panel"><PanelHeader title="Stock to watch" action="View inventory →" onAction={() => switchSection('Inventory')}/><InventoryTable rows={lowStock.slice(0, 5)} disabled={disabled} onAdjust={row => { setModalError(''); setModal({ kind: 'stock', value: row }); }} onHistory={row => openDetail('movements', row.variant_id)}/></section>
         </>}
-        {section === 'Orders' && <section className="panel table-panel"><PanelHeader title="All orders" subtitle={`${data.orders.length} recorded orders`} action="↓ Export CSV" onAction={!disabled ? exportReport : undefined}/><Search value={search} onChange={setSearch} label="Search order or customer"/>
-          <label className="admin-filter">Order status <select value={status} onChange={e => setStatus(e.target.value)}><option value="">All statuses</option>{['placed', 'shipped', 'delivered'].map(s => <option key={s}>{s}</option>)}</select></label>
+        {!isAdmin && currentSection === 'Orders' && <section className="panel table-panel"><PanelHeader title="All orders" subtitle={`${data.orders.length} recorded orders`} action="↓ Export CSV" onAction={!disabled ? exportReport : undefined}/><Search value={search} onChange={setSearch} label="Search order or customer"/>
+          <label className="admin-filter">Order status <select value={status} onChange={e => setStatus(e.target.value)}><option value="">All statuses</option>{['placed', 'processing', 'shipped', 'delivered'].map(s => <option key={s}>{s}</option>)}</select></label>
           <OrderTable orders={orders} disabled={disabled} onDetail={o => openDetail('orders', o.order_id)} onAdvance={advance}/></section>}
-        {section === 'Products' && <section className="panel table-panel"><PanelHeader title="Product catalog" subtitle={`${data.products.length} products, including inactive products`} action="+ Add product" onAction={!disabled ? () => editProduct() : undefined}/>
+        {!isAdmin && currentSection === 'Products' && <section className="panel table-panel"><PanelHeader title="Product catalog" subtitle={`${data.products.length} products, including inactive products`} action="+ Add product" onAction={!disabled ? () => editProduct() : undefined}/>
           <div className="admin-toolbar"><button disabled={disabled} onClick={() => { setModalError(''); setModal({ kind: 'categories' }); }}>+ Category</button><button disabled={disabled} onClick={() => { setModalError(''); setModal({ kind: 'brands' }); }}>+ Brand</button></div>
           <Search value={search} onChange={setSearch} label="Search products, brand or category"/>
           <div className="admin-table-wrap"><table className="admin-live-table"><thead><tr><th>Product</th><th>Category / brand</th><th>Base price</th><th>Status</th><th>Manage</th></tr></thead><tbody>{products.map(p => <tr key={p.product_id}><td><strong>{p.name}</strong><small>#{p.product_id}</small></td><td>{p.category}<small>{p.brand}</small></td><td>{money(p.base_price_minor, p.currency)}</td><td>{p.is_active ? 'Active' : 'Inactive'}</td><td><div className="admin-row-actions"><button disabled={disabled} onClick={() => editProduct(p)}>Edit</button><button disabled={disabled} onClick={() => openDetail('products', p.product_id)}>Variants</button></div></td></tr>)}</tbody></table>{!products.length && <Empty/>}</div></section>}
-        {section === 'Inventory' && <section className="panel table-panel"><PanelHeader title="Variant inventory" subtitle="Stock updates require a reason and check for concurrent changes"/><Search value={search} onChange={setSearch} label="Search products, SKU, size or colour"/><InventoryTable rows={inventory} disabled={disabled} onAdjust={row => { setModalError(''); setModal({ kind: 'stock', value: row }); }} onHistory={row => openDetail('movements', row.variant_id)}/></section>}
+        {!isAdmin && currentSection === 'Inventory' && <section className="panel table-panel"><PanelHeader title="Variant inventory" subtitle="Stock updates require a reason and check for concurrent changes"/><Search value={search} onChange={setSearch} label="Search products, SKU, size or colour"/><InventoryTable rows={inventory} disabled={disabled} onAdjust={row => { setModalError(''); setModal({ kind: 'stock', value: row }); }} onHistory={row => openDetail('movements', row.variant_id)}/></section>}
+        {isAdmin && <AdminManagement section={currentSection} data={data} disabled={disabled} mutate={mutate} openCreate={target => { if (typeof target === 'string') switchSection(target); else { setModalError(''); setModal({ kind: 'manager-form' }); } }}/>}
         <footer className="admin-footer">Court Supply staff portal <span>Changes are saved to your store database</span></footer>
       </main></div>
     {modal && <div className="admin-modal-backdrop" onClick={() => !busy && setModal(null)}><section className="admin-modal" role="dialog" aria-modal="true" aria-labelledby="admin-modal-title" onClick={e => e.stopPropagation()}>
       <div className="admin-modal-heading"><h2 id="admin-modal-title">{modalTitle(modal)}</h2><button disabled={busy} aria-label="Close dialog" onClick={() => setModal(null)}>✕</button></div>
       {modalError && <p className="admin-error" role="alert">{modalError}</p>}
-      {['product-form', 'variant-form', 'stock', 'categories', 'brands'].includes(modal.kind) && <form onSubmit={e => formSubmit(e, modal.kind, modal.value)} key={`${modal.kind}-${modal.value?.product_id || modal.value?.variant_id || 'new'}`}><fieldset disabled={busy}>
-        {modal.kind === 'product-form' && <ProductFields value={modal.value} categories={data.categories} brands={data.brands}/>}
+      {['manager-form', 'product-form', 'variant-form', 'stock', 'categories', 'brands'].includes(modal.kind) && <form onSubmit={e => formSubmit(e, modal.kind, modal.value)} key={`${modal.kind}-${modal.value?.product_id || modal.value?.variant_id || 'new'}`}><fieldset disabled={busy}>
+        {modal.kind === 'manager-form' && <><p>Managers can manage the catalog, stock, and customer orders.</p><label>Full name<input name="full_name" required minLength="2" maxLength="160" autoComplete="name"/></label><label>Work email<input name="email" type="email" required maxLength="254" autoComplete="off"/></label><label>Initial password<input name="password" type="password" required minLength="12" maxLength="128" autoComplete="new-password"/></label><p>Use at least 12 characters.</p></>}
+        {modal.kind === 'product-form'  && <ProductFields value={modal.value} categories={data.categories} brands={data.brands}/>}
         {modal.kind === 'variant-form' && <VariantFields value={modal.value}/>}
         {modal.kind === 'stock' && <><p>{modal.value.product_name} · {modal.value.size} / {modal.value.colour}</p><p>Current stock: {modal.value.quantity_on_hand}</p><label>New quantity<input name="quantity" type="number" required min="0" max="2147483647" step="1" defaultValue={modal.value.quantity_on_hand}/></label><label>Reason<input name="reason" required maxLength="80" placeholder="e.g. Supplier restock or stock count correction"/></label></>}
         {['categories', 'brands'].includes(modal.kind) && <label>Name<input name="name" required maxLength={modal.kind === 'categories' ? 100 : 120}/></label>}
@@ -184,7 +201,7 @@ export default function AdminDashboard({ user, token, sessionLoading = false, on
 }
 
 function modalTitle(modal) {
-  return ({ 'product-form': modal.value ? 'Edit product' : 'Add product', 'variant-form': modal.value ? 'Edit variant' : 'Add variant', stock: 'Adjust stock', categories: 'Add category', brands: 'Add brand', products: modal.value?.name, orders: 'Order details', movements: 'Stock movement history' })[modal.kind];
+  return ({ 'manager-form': 'Create manager account', 'product-form': modal.value ? 'Edit product' : 'Add product', 'variant-form': modal.value ? 'Edit variant' : 'Add variant', stock: 'Adjust stock', categories: 'Add category', brands: 'Add brand', products: modal.value?.name, orders: 'Order details', movements: 'Stock movement history' })[modal.kind];
 }
 function Metric({ label, value, detail }) { return <section className="metric-card"><div className="metric-top"><span>{label}</span></div><strong className="metric-value">{value}</strong><div className="metric-note">{detail}</div></section>; }
 function PanelHeader({ title, subtitle, action, onAction }) { return <div className="panel-heading"><div><h2>{title}</h2>{subtitle && <p>{subtitle}</p>}</div>{action && <button disabled={!onAction} onClick={onAction}>{action}</button>}</div>; }

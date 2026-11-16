@@ -80,9 +80,39 @@ class AdminIntegrationTest(unittest.TestCase):
         self.assertIn('customer_email', detail)
         invalid = self.client.patch(f'/api/admin/orders/{order_id}/status', json={'status': 'delivered'})
         self.assertEqual(invalid.status_code, 409)
-        for status in ['shipped', 'delivered']:
+        for status in ['processing', 'shipped', 'delivered']:
             changed = self.client.patch(f'/api/admin/orders/{order_id}/status', json={'status': status})
             self.assertEqual(changed.status_code, 200, changed.text)
             self.assertEqual(changed.json()['status'], status)
         history = self.client.get(f'/api/admin/orders/{order_id}').json()['status_history']
         self.assertEqual(history[-1]['new_status'], 'delivered')
+
+    def test_manager_cannot_access_admin_tools(self):
+        self.staff('manager')
+        for path in ('managers', 'activity', 'settings'):
+            self.assertEqual(self.client.get('/api/admin/' + path).status_code, 403)
+        self.assertEqual(self.client.patch('/api/admin/settings', json={
+            'store_name': 'Test Store', 'contact_email': 'shop@example.com',
+        }).status_code, 403)
+
+    def test_admin_manager_lifecycle_and_settings(self):
+        self.staff()
+        created = self.client.post('/api/admin/managers', json={
+            'full_name': 'Test Manager', 'email': 'new.manager@example.com',
+            'password': 'long-enough-password',
+        })
+        self.assertEqual(created.status_code, 201, created.text)
+        self.assertNotIn('password_hash', created.json())
+        user_id = created.json()['user_id']
+        for active in (False, True):
+            changed = self.client.patch(f'/api/admin/managers/{user_id}', json={'is_active': active})
+            self.assertEqual(changed.status_code, 200, changed.text)
+            self.assertEqual(changed.json()['is_active'], active)
+        settings = {'store_name': 'Test Store', 'contact_email': 'shop@example.com'}
+        saved = self.client.patch('/api/admin/settings', json=settings)
+        self.assertEqual(saved.status_code, 200, saved.text)
+        self.assertEqual(self.client.get('/api/admin/settings').json(), settings)
+        activity = self.client.get('/api/admin/activity')
+        self.assertEqual(activity.status_code, 200, activity.text)
+        self.assertTrue(activity.json())
+        self.assertIn('staff_name', activity.json()[0])

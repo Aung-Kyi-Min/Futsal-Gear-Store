@@ -10,8 +10,8 @@ from .auth import AuthDB, StaffUser
 from .catalog import PageNumber, PageSize
 
 router = APIRouter(prefix="/orders")
-OrderStatus = Literal["placed", "shipped", "delivered"]
-NEXT_STATUS = {"placed": "shipped", "shipped": "delivered"}
+OrderStatus = Literal["placed", "processing", "shipped", "delivered"]
+NEXT_STATUS = {"placed": "processing", "processing": "shipped", "shipped": "delivered"}
 ORDER_FIELDS = """
     order_id, customer_id, status, subtotal_minor, shipping_minor, tax_minor,
     total_minor, currency, delivery_name, created_at, updated_at

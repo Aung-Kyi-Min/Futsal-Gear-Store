@@ -209,3 +209,25 @@ The frontend accepts `VITE_API_URL` for a separately hosted backend; set it befo
 This is a development starter. Checkout records a demo order and reduces inventory; it does not charge money, send email, or arrange shipping. Product illustrations are emoji placeholders. Before accepting real customers, add payment-provider integration, shipping/tax rules, rate limits, and an appropriate privacy and data-retention policy. The public API intentionally has no order-list endpoint. Fonts use Google Fonts with local fallbacks.
 
 PostgreSQL catalog/checkout integration tests use an isolated schema per test. To run them, set `TEST_DATABASE_URL` to a disposable UTF-8 PostgreSQL database and run the backend test command above. They check public visibility, variant prices, audit records, transaction rollback, and concurrent requests for the last item. Without that variable these integration tests are skipped.
+
+### Staff workspaces
+
+Managers use Overview, Orders, Products, and Inventory to manage product availability,
+sizes, colours, prices, and stock. Orders advance in sequence:
+`placed → processing → shipped → delivered`; skipping a step returns HTTP 409.
+Administrators use Overview, Managers, Activity, and Settings. The new admin-only
+endpoints require an authenticated `administrator` (other roles receive HTTP 403):
+
+| Endpoint | Contract |
+| --- | --- |
+| `GET /api/admin/managers` | List manager accounts, including disabled accounts; no credentials returned. |
+| `POST /api/admin/managers` | `{full_name, email, password}`; password 12–128 characters. Returns 201; duplicate email returns 409. |
+| `PATCH /api/admin/managers/{user_id}` | `{is_active: boolean}` disables/reactivates a manager; other account roles return 404. Disabled accounts lose access on their next request. |
+| `GET /api/admin/activity` | Latest 100 stock movements and order status events with actor name/email and timestamp. Includes customer checkout events. |
+| `GET /api/admin/settings` | Saved `{store_name, contact_email}`. |
+| `PATCH /api/admin/settings` | Save `{store_name, contact_email}`; validated email and store name of 2–160 characters. |
+
+Before using the updated portal, run `.venv/bin/alembic upgrade head` from `backend/`.
+For a schema managed through pgAdmin, apply
+`backend/migrations/sql/0003_staff_workspaces.sql` instead. Settings are saved for
+shop administration; storefront branding remains defined by the storefront UI.
