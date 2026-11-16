@@ -10,7 +10,7 @@ const money = (cents, currency = "MYR") =>
   new Intl.NumberFormat("en-MY", { style: "currency", currency }).format(
     cents / 100,
   );
-function ProductCard({ p, cart, change }) {
+function ProductCard({ p, cart, change, onSelect }) {
   const [selectedId, setSelectedId] = useState(null);
   const selected =
     p.variants.find((v) => v.id === selectedId) ||
@@ -20,26 +20,19 @@ function ProductCard({ p, cart, change }) {
   const stock = selected?.stock || 0;
   return (
     <article>
-      <div className="product-art cream">
-        <span className="tag">{p.category}</span>
-        {p.image_url ? (
-          <img
-            className="catalog-image"
-            src={p.image_url}
-            alt={p.name}
-            onError={(event) => {
-              event.currentTarget.hidden = true;
-            }}
-          />
-        ) : (
-          <span className="product-icon" aria-hidden="true">
-            {p.icon}
-          </span>
-        )}
-        <span className="art-word">COURT / SUPPLY</span>
-      </div>
+      <button className="product-image-link" type="button" onClick={() => onSelect(p)} aria-label={`View details for ${p.name}`}>
+        <div className="product-art cream">
+          <span className="tag">{p.category}</span>
+          {p.image_url ? (
+            <img className="catalog-image" src={p.image_url} alt={p.name} style={{ objectFit: "contain", objectPosition: "center" }} onError={(event) => { event.currentTarget.hidden = true; }}/>
+          ) : (
+            <span className="product-icon" aria-hidden="true">{p.icon}</span>
+          )}
+          <span className="art-word">VIEW DETAILS ↗</span>
+        </div>
+      </button>
       <div className="product-heading">
-        <h3>{p.name}</h3>
+        <button className="product-title-link" type="button" onClick={() => onSelect(p)}><h3>{p.name}</h3></button>
         <strong>
           {money(selected?.price_cents ?? p.price_cents, p.currency)}
         </strong>
@@ -99,6 +92,7 @@ function ProductDetailPage({ product, cart, change, money, onBack }) {
   const hasAngleViews = Boolean(product.angle_image_url);
   const viewIndex = Math.floor(((((angle + 45) % 360) + 360) % 360) / 90);
   const viewPosition = [['0%', '0%'], ['100%', '0%'], ['0%', '100%'], ['100%', '100%']][viewIndex];
+  const viewPositions = [['0% 0%', '100% 0%'], ['0% 100%', '100% 100%']].flat();
   function beginDrag(event) {
     if (event.button !== undefined && event.button !== 0) return;
     dragRef.current = { x: event.clientX, angle };
@@ -111,6 +105,7 @@ function ProductDetailPage({ product, cart, change, money, onBack }) {
   }
   function endDrag() { dragRef.current = null; }
   function rotate(delta) { setAngle(current => (current + delta + 360) % 360); }
+  function selectView(index) { setAngle(index * 90); }
   function zoomBy(delta) { setZoom(current => Math.max(1, Math.min(2.5, Number((current + delta).toFixed(2))))); }
   function resetViewer() { setAngle(0); setZoom(1); }
   const angleLabel = `${Math.round(angle)}°`;
@@ -121,7 +116,7 @@ function ProductDetailPage({ product, cart, change, money, onBack }) {
         <span className="viewer-badge">↻ &nbsp; PRODUCT 360°</span><span className="viewer-angle">{hasAngleViews ? `VIEW ${viewIndex + 1} / 4` : angleLabel}</span>
         {product.angle_image_url ? <div className="viewer-angle-frame" role="img" aria-label={`${product.name}, view ${viewIndex + 1} of 4`} style={{ backgroundImage: `url("${product.angle_image_url}")`, backgroundPosition: `${viewPosition[0]} ${viewPosition[1]}`, transform: `scale(${zoom})` }}/> : product.image_url ? <img className="viewer-product-image" src={product.image_url} alt={product.name} draggable="false" style={{ transform: `scale(${zoom})` }} onError={event => { event.currentTarget.hidden = true; }}/> : <span className="viewer-fallback" aria-hidden="true">{product.icon || '⚽'}</span>}
         <div className="viewer-instruction"><span>↔</span> Drag to see the product from different angles · Use controls to zoom</div>
-      </div><div className="viewer-controls"><button type="button" aria-label="Show previous product view" onClick={() => rotate(-90)} disabled={!hasAngleViews}>↶</button><button type="button" aria-label="Show next product view" onClick={() => rotate(90)} disabled={!hasAngleViews}>↷</button><span className="viewer-control-divider"/><button type="button" aria-label="Zoom out" onClick={() => zoomBy(-0.25)} disabled={zoom <= 1}>−</button><span className="zoom-value">{Math.round(zoom * 100)}%</span><button type="button" aria-label="Zoom in" onClick={() => zoomBy(0.25)} disabled={zoom >= 2.5}>+</button><button className="viewer-reset" type="button" onClick={resetViewer}>Reset view</button></div><p className="viewer-demo-note">{hasAngleViews ? 'Four product specific views · Drag to inspect each angle' : 'More product views are not available for this item yet.'}</p></div>
+      </div><div className="viewer-controls"><button type="button" aria-label="Show previous product view" onClick={() => rotate(-90)} disabled={!hasAngleViews}>↶</button><button type="button" aria-label="Show next product view" onClick={() => rotate(90)} disabled={!hasAngleViews}>↷</button><span className="viewer-control-divider"/><button type="button" aria-label="Zoom out" onClick={() => zoomBy(-0.25)} disabled={zoom <= 1}>−</button><span className="zoom-value">{Math.round(zoom * 100)}%</span><button type="button" aria-label="Zoom in" onClick={() => zoomBy(0.25)} disabled={zoom >= 2.5}>+</button><button className="viewer-reset" type="button" onClick={resetViewer}>Reset view</button></div>{hasAngleViews && <div className="viewer-view-selector" role="group" aria-label={`Choose a view of ${product.name}`}>{viewPositions.map((position, index) => <button key={position} className={`viewer-view-option${viewIndex === index ? ' active' : ''}`} type="button" aria-label={`Show product view ${index + 1}`} aria-pressed={viewIndex === index} onClick={() => selectView(index)}><span className="viewer-view-thumb" style={{ backgroundImage: `url("${product.angle_image_url}")`, backgroundPosition: position }}/><small>View 0{index + 1}</small></button>)}</div>}<p className="viewer-demo-note">{hasAngleViews ? 'Four product specific views · Drag or select a view to inspect it' : 'More product views are not available for this item yet.'}</p></div>
       <div className="product-detail-info"><p className="eyebrow">{product.brand} · {product.category}</p><h1>{product.name}</h1><p className="detail-price">{money(variant?.price_cents ?? product.price_cents, product.currency)}</p><p className="detail-description">{product.description}</p>
         <label className="detail-variant-picker">Size / colour<select aria-label={`Choose size and colour for ${product.name}`} value={variant?.id || ''} disabled={!product.variants.length} onChange={event => setVariantId(Number(event.target.value))}>{!product.variants.length && <option value="">No options available</option>}{product.variants.map(v => <option key={v.id} value={v.id}>{v.size} / {v.colour}{!v.stock ? ' — Sold out' : ''}</option>)}</select></label>
         <div className="detail-stock"><span className={stock ? 'in-stock' : 'out-stock'}><i/>{stock ? 'In stock' : 'Sold out'}</span>{stock > 0 && stock <= 5 && <span>Only {stock} left</span>}{variant?.sku && <small>SKU {variant.sku}</small>}</div>
@@ -171,9 +166,7 @@ function AboutPage({ onHome, onShop }) {
           </button>
         </div>
         <div className="about-feature">
-          <span className="about-ball" aria-hidden="true">
-            ⚽
-          </span>
+          <img className="about-feature-image" src="/images/about-court-ball.jpg" alt="Futsal ball on an indoor court" />
           <div>
             <small>OUR POINT OF VIEW</small>
             <strong>
@@ -182,10 +175,6 @@ function AboutPage({ onHome, onShop }) {
               getting on court easier.
             </strong>
           </div>
-          <span className="about-mark">
-            CS
-            <br />/ 01
-          </span>
         </div>
       </section>
       <section className="about-values">
@@ -336,6 +325,7 @@ function ContactPage({ onHome, feedback, onSubmit }) {
   );
 }
 
+const slugifyProduct = (name) => name.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
 const pagePaths = {
   home: "/",
   shop: "/shop",
@@ -347,8 +337,9 @@ const pagePaths = {
 
 function App() {
   const [path, setPath] = useState(() => window.location.pathname);
+  const productSlug = path.match(/^\/shop\/([^/]+)\/?$/)?.[1] || "";
   const orderId = path.match(/^\/orders\/([^/]+)\/?$/)?.[1];
-  const page = orderId ? "orders" : Object.keys(pagePaths).find((name) => pagePaths[name] === path) || "home";
+  const page = productSlug ? "product" : orderId ? "orders" : Object.keys(pagePaths).find((name) => pagePaths[name] === path) || "home";
   const [confirmedOrderId, setConfirmedOrderId] = useState(null);
   const [products, setProducts] = useState([]);
   const [category, setCategory] = useState("All gear");
@@ -465,9 +456,12 @@ function App() {
       p.name.toLowerCase().includes(query.toLowerCase()),
   );
   const featuredProducts = products.filter((p) => p.stock > 0).slice(0, 5);
+  const detailProduct = productSlug ? products.find((p) => slugifyProduct(p.name) === productSlug) : null;
   function navigate(nextPage, nextOrderId) {
     const nextPath = nextPage === "orders" && nextOrderId
       ? `/orders/${nextOrderId}`
+      : nextPage === "product" && nextOrderId
+        ? `/shop/${slugifyProduct(nextOrderId.name)}`
       : pagePaths[nextPage];
     if (window.location.pathname !== nextPath)
       window.history.pushState({}, "", nextPath);
@@ -739,6 +733,12 @@ function App() {
             onHistory={() => navigate("orders")}
             onOpenOrder={(id) => navigate("orders", id)}
           />
+        ) : page === "product" ? loading ? (
+          <p role="status" className="loading-state">Loading product details…</p>
+        ) : detailProduct ? (
+          <ProductDetailPage key={detailProduct.id} product={detailProduct} cart={cart} change={change} money={money} onBack={() => navigate("shop")}/>
+        ) : (
+          <section className="product-not-found"><p className="eyebrow">PRODUCT NOT FOUND</p><h1>We couldn’t find that item.</h1><button className="primary" onClick={() => navigate("shop")}>Back to all gear <span>↗</span></button></section>
         ) : page === "home" ? (
           <>
             <section className="hero">
@@ -761,11 +761,7 @@ function App() {
                 </div>
               </div>
               <div className="court-art" aria-hidden="true">
-                <div className="court-lines">
-                  <i />
-                  <b />
-                </div>
-                <div className="ball">⚽</div>
+                <img className="hero-court-image" src="/images/home-court-ball.jpg" alt="" />
                 <span className="vertical">OWN YOUR NEXT MOVE</span>
                 <div className="art-label">
                   THE COURT IS CALLING.
@@ -831,6 +827,7 @@ function App() {
                       cart={cart}
                       change={change}
                       money={money}
+                      onSelect={(product) => navigate("product", product)}
                     />
                   ))}
                 </div>
@@ -925,6 +922,7 @@ function App() {
                         cart={cart}
                         change={change}
                         money={money}
+                        onSelect={(product) => navigate("product", product)}
                       />
                     ))}
                   </div>
