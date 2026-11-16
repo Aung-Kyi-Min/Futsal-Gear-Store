@@ -1,5 +1,3 @@
-from datetime import datetime
-from typing import Literal
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException
@@ -8,61 +6,30 @@ from sqlalchemy import text
 
 from .auth import AuthDB, StaffUser
 from .catalog import PageNumber, PageSize
+from .order_records import (
+    ORDER_FIELDS,
+    STATUS_HISTORY_FIELDS,
+    OrderItem,
+    OrderPage,
+    OrderStatus,
+    OrderStatusEntry,
+    OrderSummary,
+    order_items,
+)
 
 router = APIRouter(prefix="/orders")
-OrderStatus = Literal["placed", "processing", "shipped", "delivered"]
 NEXT_STATUS = {"placed": "processing", "processing": "shipped", "shipped": "delivered"}
-ORDER_FIELDS = """
-    order_id, customer_id, status, subtotal_minor, shipping_minor, tax_minor,
-    total_minor, currency, delivery_name, created_at, updated_at
-"""
 
 
-class OrderSummary(BaseModel):
-    order_id: UUID
-    customer_id: UUID
-    status: OrderStatus
-    subtotal_minor: int
-    shipping_minor: int
-    tax_minor: int
-    total_minor: int
-    currency: str
-    delivery_name: str
-    created_at: datetime
-    updated_at: datetime
-
-
-class OrderItem(BaseModel):
-    order_item_id: int
-    variant_id: int
-    product_name_snapshot: str
-    size_snapshot: str
-    colour_snapshot: str
-    quantity: int
-    unit_price_minor: int
-    line_total_minor: int
-
-
-class OrderStatusEntry(BaseModel):
-    history_id: int
+class AdminOrderStatusEntry(OrderStatusEntry):
     changed_by_user_id: UUID
-    old_status: OrderStatus | None
-    new_status: OrderStatus
-    changed_at: datetime
 
 
 class OrderDetail(OrderSummary):
     customer_email: str
     delivery_address: str
     items: list[OrderItem]
-    status_history: list[OrderStatusEntry]
-
-
-class OrderPage(BaseModel):
-    orders: list[OrderSummary]
-    total: int
-    page: int
-    page_size: int
+    status_history: list[AdminOrderStatusEntry]
 
 
 class OrderStatusUpdate(BaseModel):
@@ -102,22 +69,14 @@ def get_order(db: AuthDB, order_id: UUID):
     ).mappings().one_or_none()
     if order is None:
         raise HTTPException(404, "Order not found")
-    items = db.execute(
-        text("""
-            SELECT order_item_id, variant_id, product_name_snapshot, size_snapshot, colour_snapshot,
-                   quantity, unit_price_minor, line_total_minor
-            FROM order_items WHERE order_id = :order_id ORDER BY order_item_id
-        """),
-        params,
-    ).mappings().all()
     history = db.execute(
-        text("""
-            SELECT history_id, changed_by_user_id, old_status, new_status, changed_at
+        text(f"""
+            SELECT {STATUS_HISTORY_FIELDS}, changed_by_user_id
             FROM order_status_history WHERE order_id = :order_id ORDER BY changed_at, history_id
         """),
         params,
     ).mappings().all()
-    return {**order, "items": items, "status_history": history}
+    return {**order, "items": order_items(db, order_id), "status_history": history}
 
 
 @router.patch("/{order_id}/status", response_model=OrderSummary)
