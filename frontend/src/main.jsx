@@ -30,8 +30,17 @@ function ProductCard({ p, cart, change }) {
       {!stock ? 'Sold out' : quantity >= Math.min(stock, 99) ? 'Bag limit reached' : 'Add to kit bag'} <span>+</span></button>
   </article>;
 }
+function AboutPage({ onHome, onShop }) {
+  return <div className="info-page about-page"><div className="info-page-heading"><button className="back-link" onClick={onHome}>← Back to home</button><p className="eyebrow">A LITTLE ABOUT OUR GAME</p><h1>Made for the moments<br/>between kick-off and<br/><em>one more game.</em></h1><p>Small court. Big energy. Gear that helps you feel ready to play.</p></div><section className="about-us-section"><div className="about-copy"><h2>Futsal is more than<br/>ninety minutes.</h2><p>Court Supply is a demo futsal shop built around the energy of the indoor game. We bring together practical footwear, balls, apparel, and accessories for players who love a quick pass and a close finish.</p><p>Whether it’s your first session or your weekly run with friends, we want finding your next essential to feel straightforward and fun.</p><button className="text-link" onClick={onShop}>Explore the lineup <span>↗</span></button></div><div className="about-feature"><span className="about-ball" aria-hidden="true">⚽</span><div><small>OUR POINT OF VIEW</small><strong>Good gear should make<br/>getting on court easier.</strong></div><span className="about-mark">CS<br/>/ 01</span></div></section><section className="about-values"><article><span>01</span><h2>Made for the game</h2><p>Useful kit chosen for quick play, close control, and indoor courts.</p></article><article><span>02</span><h2>Easy to explore</h2><p>Clear product details help you find a good fit for your next session.</p></article><article><span>03</span><h2>Better together</h2><p>Futsal is at its best when everyone gets involved.</p></article></section><div className="info-page-cta"><strong>Ready for your next session?</strong><button className="primary" onClick={onShop}>Browse the gear <span>↗</span></button></div></div>;
+}
+
+function ContactPage({ onHome, feedback, onSubmit }) {
+  return <div className="info-page contact-page"><div className="info-page-heading"><button className="back-link" onClick={onHome}>← Back to home</button><p className="eyebrow">WE’RE HERE TO HELP</p><h1>Let’s talk<br/>futsal gear.</h1><p>Questions about an order, product, or finding the right gear? Send us a note.</p></div><section className="contact-section"><div className="contact-intro"><p className="eyebrow">CONTACT DETAILS</p><h2>Need a hand<br/>with your kit?</h2><p>Our demo team is happy to help with product questions and order guidance.</p><div className="contact-details"><a href="mailto:hello@courtsupply.test"><span>✉</span><span><small>EMAIL</small><strong>hello@courtsupply.test</strong></span></a><a href="tel:+60355550148"><span>↗</span><span><small>PHONE</small><strong>+60 3-5555 0148</strong></span></a><div><span>◷</span><span><small>DEMO STORE HOURS</small><strong>Tue–Sun · 10:00 am–7:00 pm</strong></span></div><p className="contact-demo-note">Sample contact details for this demo store.</p></div></div><form className="contact-form" onSubmit={onSubmit}><p className="eyebrow">DROP US A LINE</p><h3>What can we help with?</h3><label>Your name<input name="contact_name" type="text" required minLength="2" maxLength="100" placeholder="Name"/></label><label>Email address<input name="contact_email" type="email" required maxLength="254" placeholder="you@example.com"/></label><label>Topic<select name="contact_topic" defaultValue="Order question"><option>Order question</option><option>Product information</option><option>Returns and exchanges</option><option>Something else</option></select></label><label>Message<textarea name="contact_message" required minLength="10" maxLength="1000" rows="4" placeholder="Tell us how we can help…"/></label><button className="primary" type="submit">Send message <span>↗</span></button>{feedback && <p className="contact-feedback" role="status">{feedback}</p>}<small>Demo form only. Your message won’t be sent or stored.</small></form></section></div>;
+}
+
+const pageFromPath = path => ({ '/shop': 'shop', '/admin': 'admin', '/about': 'about', '/contact': 'contact' }[path] || 'home');
 function App() {
-  const [page, setPage] = useState(() => window.location.pathname === '/shop' ? 'shop' : window.location.pathname === '/admin' ? 'admin' : 'home');
+  const [page, setPage] = useState(() => pageFromPath(window.location.pathname));
   const [products, setProducts] = useState([]);
   const [category, setCategory] = useState('All gear');
   const [query, setQuery] = useState('');
@@ -40,6 +49,7 @@ function App() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
+  const [contactFeedback, setContactFeedback] = useState('');
   const [busy, setBusy] = useState(false);
   const [authOpen, setAuthOpen] = useState(false);
   const [authMode, setAuthMode] = useState('login');
@@ -82,7 +92,7 @@ function App() {
   }
   useEffect(() => { load(); }, []);
   useEffect(() => {
-    const onPopState = () => setPage(window.location.pathname === '/shop' ? 'shop' : window.location.pathname === '/admin' ? 'admin' : 'home');
+    const onPopState = () => setPage(pageFromPath(window.location.pathname));
     window.addEventListener('popstate', onPopState);
     return () => window.removeEventListener('popstate', onPopState);
   }, []);
@@ -96,10 +106,25 @@ function App() {
   const visibleProducts = products.filter(p => (category === 'All gear' || category === p.category) && p.name.toLowerCase().includes(query.toLowerCase()));
   const featuredProducts = products.filter(p => p.stock > 0).slice(0, 5);
   function navigate(nextPage) {
-    const path = nextPage === 'shop' ? '/shop' : nextPage === 'admin' ? '/admin' : '/';
+    const path = ({ shop: '/shop', admin: '/admin', about: '/about', contact: '/contact' })[nextPage] || '/';
     if (window.location.pathname !== path) window.history.pushState({}, '', path);
     setPage(nextPage);
     window.scrollTo({ top: 0, behavior: 'smooth' });
+  }
+  function navigateToSection(id) {
+    if (page !== 'home') {
+      if (window.location.pathname !== '/') window.history.pushState({}, '', '/');
+      setPage('home');
+      window.setTimeout(() => document.getElementById(id)?.scrollIntoView({ behavior: 'smooth' }), 0);
+      return;
+    }
+    document.getElementById(id)?.scrollIntoView({ behavior: 'smooth' });
+  }
+  function submitContact(event) {
+    event.preventDefault();
+    const name = new FormData(event.currentTarget).get('contact_name');
+    setContactFeedback(`Thanks, ${name}. Your message was submitted in this demo. It has not been sent.`);
+    event.currentTarget.reset();
   }
   async function staffLogin(email, password) {
     const data = await request('/api/auth/login', { method: 'POST', body: { email, password } });
@@ -161,7 +186,7 @@ function App() {
   if (page === 'admin') return <AdminDashboard user={user} token={token} sessionLoading={sessionLoading} onLogin={staffLogin} onLogout={logout} onExit={() => navigate('home')}/>;
   return <>
     <div className="announcement">FOR THE LOVE OF THE SMALL-SIDED GAME <span>Built for your next match ↗</span></div>
-    <header><a className="brand" href="/" onClick={e => { e.preventDefault(); navigate('home'); }}>◈ COURT<span>SUPPLY</span></a><nav><a href="/shop" onClick={e => { e.preventDefault(); navigate('shop'); }}>Shop gear</a><a href="/#about" onClick={e => { e.preventDefault(); if (page !== 'home') { navigate('home'); setTimeout(() => document.getElementById('about')?.scrollIntoView({ behavior: 'smooth' }), 0); } else document.getElementById('about')?.scrollIntoView({ behavior: 'smooth' }); }}>Our game</a></nav><div className="header-actions">{user ? <><span className="account-name">{user.full_name}</span><button className="account-button" onClick={logout}>Log out</button></> : <button className="account-button" disabled={sessionLoading} onClick={() => { setAuthMode('login'); setAuthFeedback(''); setAuthOpen(true); }}>{sessionLoading ? 'Checking account…' : 'Log in / Sign up'}</button>}<button className="cart-button" onClick={() => setOpen(true)}>Kit bag <span>{count}</span></button></div></header>
+    <header><a className="brand" href="/" onClick={e => { e.preventDefault(); navigate('home'); }}>◈ COURT<span>SUPPLY</span></a><nav><a href="/shop" onClick={e => { e.preventDefault(); navigate('shop'); }}>Shop gear</a><a href="/#about" onClick={e => { e.preventDefault(); navigateToSection('about'); }}>Our game</a><a href="/about" aria-current={page === 'about' ? 'page' : undefined} onClick={e => { e.preventDefault(); navigate('about'); }}>About us</a><a href="/contact" aria-current={page === 'contact' ? 'page' : undefined} onClick={e => { e.preventDefault(); navigate('contact'); }}>Contact us</a></nav><div className="header-actions">{user ? <><span className="account-name">{user.full_name}</span><button className="account-button" onClick={logout}>Log out</button></> : <button className="account-button" disabled={sessionLoading} onClick={() => { setAuthMode('login'); setAuthFeedback(''); setAuthOpen(true); }}>{sessionLoading ? 'Checking account…' : 'Log in / Sign up'}</button>}<button className="cart-button" onClick={() => setOpen(true)}>Kit bag <span>{count}</span></button></div></header>
     <main>
     {sessionError && <p className="error" role="alert">{sessionError}</p>}
     {page === 'home' ? <>
@@ -171,7 +196,7 @@ function App() {
     {notice && <p role="status" className="notice">{notice}</p>}{error && <p role="alert" className="error">{error} <button onClick={load}>Retry</button></p>}
     {loading ? <p role="status" className="loading-state">Getting the lineup ready…</p> : featuredProducts.length ? <div className="products">{featuredProducts.map(p => <ProductCard key={p.id} p={p} cart={cart} change={change} money={money}/>)}</div> : <p className="empty-catalog">Gear picks will show here when products are available.</p>}
     <button className="primary browse-cta" onClick={() => navigate('shop')}>Shop all gear <span>↗</span></button></section>
-    </> : <section id="shop" className="shop catalog-page"><div className="catalog-heading"><button className="back-link" onClick={() => navigate('home')}>← Back to home</button><p className="eyebrow">THE COURT SUPPLY LINEUP</p><h1>Find your game gear.</h1><p>Browse the essentials. Add your picks to the kit bag.</p></div><div className="filters"><div className="tabs" role="group" aria-label="Filter products by category">{categories.map(c => <button key={c} aria-pressed={category === c} className={category === c ? 'active' : ''} onClick={() => setCategory(c)}>{c}</button>)}</div><label className="search-box"><span aria-hidden="true">⌕</span><input aria-label="Search gear" type="search" placeholder="Search products" value={query} onChange={e => setQuery(e.target.value)}/></label></div>
+    </> : page === 'about' ? <AboutPage onHome={() => navigate('home')} onShop={() => navigate('shop')}/> : page === 'contact' ? <ContactPage onHome={() => navigate('home')} feedback={contactFeedback} onSubmit={submitContact}/> : <section id="shop" className="shop catalog-page"><div className="catalog-heading"><button className="back-link" onClick={() => navigate('home')}>← Back to home</button><p className="eyebrow">THE COURT SUPPLY LINEUP</p><h1>Find your game gear.</h1><p>Browse the essentials. Add your picks to the kit bag.</p></div><div className="filters"><div className="tabs" role="group" aria-label="Filter products by category">{categories.map(c => <button key={c} aria-pressed={category === c} className={category === c ? 'active' : ''} onClick={() => setCategory(c)}>{c}</button>)}</div><label className="search-box"><span aria-hidden="true">⌕</span><input aria-label="Search gear" type="search" placeholder="Search products" value={query} onChange={e => setQuery(e.target.value)}/></label></div>
     {notice && <p role="status" className="notice">{notice}</p>}{error && !open && <p role="alert" className="error">{error} <button onClick={load}>Retry</button></p>}
     {loading ? <p role="status" className="loading-state">Getting the lineup ready…</p> : <><p className="results-count">{visibleProducts.length} {visibleProducts.length === 1 ? 'product' : 'products'}</p>{visibleProducts.length ? <div className="products">{visibleProducts.map(p => <ProductCard key={p.id} p={p} cart={cart} change={change} money={money}/>)}</div> : <div className="empty-state"><span>⌕</span><h3>No gear found</h3><p>Try another search or choose a different category.</p><button onClick={() => { setQuery(''); setCategory('All gear'); }}>Clear filters</button></div>}</>}
     </section>}
