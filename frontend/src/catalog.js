@@ -1,9 +1,36 @@
 import { request } from './api.js';
 
+const sampleImages = {
+  'Lunar Gato II': '/images/futsal-shoes-black.jpg',
+  'Top Sala Competition': '/images/futsal-shoes-blue.jpg',
+  'Monarcida Neo Sala Club IN': '/images/futsal-shoes-bluewhite.jpg',
+  'Combi Training Jersey': '/images/training-jersey-red.jpg',
+  'Team Training Shorts': '/images/training-shorts-black.jpg',
+  'Milano Team Socks': '/images/team-socks-black.jpg',
+  'F9G Futsal Ball': '/images/futsal-ball-bluewhite.jpg',
+  'Futsal Goalkeeper Gloves': '/images/goalkeeper-gloves-black-orange.jpg',
+  'Academy Team Duffel': '/images/team-duffel-black.jpg',
+  'Training Marker Cones - 10 Pack': '/images/training-cones-orange.jpg',
+};
+
+const sampleAngleImages = {
+  'Lunar Gato II': '/images/futsal-shoes-black-views.jpg',
+  'Top Sala Competition': '/images/futsal-shoes-blue-views.jpg',
+  'Monarcida Neo Sala Club IN': '/images/futsal-shoes-bluewhite-views.jpg',
+  'Combi Training Jersey': '/images/training-jersey-red-views.jpg',
+  'Team Training Shorts': '/images/training-shorts-black-views.jpg',
+  'Milano Team Socks': '/images/team-socks-black-views.jpg',
+  'F9G Futsal Ball': '/images/futsal-ball-bluewhite-views.jpg',
+  'Futsal Goalkeeper Gloves': '/images/goalkeeper-gloves-black-orange-views.jpg',
+  'Academy Team Duffel': '/images/team-duffel-black-views.jpg',
+  'Training Marker Cones - 10 Pack': '/images/training-cones-orange-views.jpg',
+};
+
 export function normalizeProduct(product) {
   const common = {
     name: product.name, category: product.category, brand: product.brand,
-    description: product.description, image_url: product.image_url,
+    description: product.description, image_url: product.image_url || sampleImages[product.name] || null,
+    angle_image_url: sampleAngleImages[product.name] || null,
     currency: product.currency, color: 'cream', icon: '⚽',
   };
   const variants = product.variants.map(variant => ({
