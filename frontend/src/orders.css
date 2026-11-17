@@ -64,7 +64,7 @@
 
 .order-row {
     display: grid;
-    grid-template-columns: 1fr minmax(100px, .5fr) minmax(90px, .5fr) auto;
+    grid-template-columns: minmax(0, 1fr) auto auto minmax(90px, .5fr) auto;
     align-items: center;
     gap: 14px;
 }
@@ -123,6 +123,7 @@
 }
 
 .order-detail-heading {
+    flex-wrap: wrap;
     margin-bottom: 20px;
 }
 

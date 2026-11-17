@@ -145,4 +145,4 @@ def checkout(data: CheckoutRequest, db: AuthDB, user: CurrentUser):
         VALUES (:order_id, :user_id, NULL, 'placed')
     '''), {'order_id': order_id, 'user_id': user.user_id})
     db.commit()
-    return {'order_id': str(order_id), 'total_minor': total, 'currency': next(iter(currencies)), 'status': 'placed'}
+    return {'order_id': str(order_id), 'total_minor': total, 'currency': next(iter(currencies)), 'status': 'placed', 'payment_status': 'UNPAID'}

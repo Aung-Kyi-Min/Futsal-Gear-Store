@@ -495,7 +495,10 @@ function App() {
       setNotice("");
       setConfirmedOrderId(data.order_id);
       navigate("orders", data.order_id);
-      await load();
+      const payment = await request(`/api/payments/orders/${data.order_id}/checkout`, {
+        token, method: "POST",
+      });
+      window.location.assign(payment.checkout_url);
     } catch (err) {
       if (err.status === 401) {
         logout();
@@ -1162,7 +1165,7 @@ function App() {
                   </p>
                 )}
                 <p className="muted">
-                  Demo checkout. No payment is collected. No shipping or tax
+                  Stripe test checkout. Use a test card. No shipping or tax
                   charges are added.
                 </p>
                 <form onSubmit={checkout}>
@@ -1202,7 +1205,7 @@ function App() {
                     {busy
                       ? "Placing order…"
                       : user
-                        ? "Place demo order ↗"
+                        ? "Continue to test payment ↗"
                         : "Log in to place order ↗"}
                   </button>
                 </form>

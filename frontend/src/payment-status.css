@@ -1,0 +1,35 @@
+.payment-status {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 7px;
+    width: fit-content;
+    padding: 6px 12px;
+    border: 1px solid;
+    border-radius: 999px;
+    font-size: 12px;
+    font-weight: 700;
+    line-height: 1.4;
+    white-space: nowrap;
+    vertical-align: middle;
+}
+
+.payment-status--paid {
+    color: #166534;
+    background: #dcfce7;
+    border-color: #a7dfb9;
+}
+
+.payment-status--unpaid {
+    color: #854d0e;
+    background: #fef3c7;
+    border-color: #ebd48c;
+}
+
+.payment-status__dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: currentColor;
+    flex-shrink: 0;
+}

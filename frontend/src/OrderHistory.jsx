@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { request } from './api.js';
 import './orders.css';
+import PaymentStatus from './PaymentStatus.jsx';
 
 const STATUS_LABELS = {
   placed: 'Placed',
@@ -51,6 +52,7 @@ function OrderList({ data, formatMoney, onOpenOrder, onShop, onPage }) {
                 <time dateTime={order.created_at}>{orderDate.format(new Date(order.created_at))}</time>
               </div>
               <Status status={order.status} />
+              <PaymentStatus status={order.payment_status} />
               <strong>{formatMoney(order.total_minor, order.currency)}</strong>
               <span className="order-view">View order <span aria-hidden="true">↗</span></span>
             </a>
@@ -72,7 +74,17 @@ function OrderList({ data, formatMoney, onOpenOrder, onShop, onPage }) {
   );
 }
 
-function OrderDetails({ order, formatMoney }) {
+function OrderDetails({ order, formatMoney, token }) {
+  const [paying, setPaying] = useState(false);
+  const [paymentError, setPaymentError] = useState('');
+  async function pay() {
+    setPaying(true);
+    setPaymentError('');
+    try {
+      const data = await request(`/api/payments/orders/${order.order_id}/checkout`, { token, method: 'POST' });
+      window.location.assign(data.checkout_url);
+    } catch (error) { setPaymentError(error.message); setPaying(false); }
+  }
   const money = (amount) => formatMoney(amount, order.currency);
   return (
     <>
@@ -82,7 +94,14 @@ function OrderDetails({ order, formatMoney }) {
           <time dateTime={order.created_at}>Placed {eventTime.format(new Date(order.created_at))}</time>
         </div>
         <Status status={order.status} />
+              <PaymentStatus status={order.payment_status} />
       </div>
+      {order.payment_status === 'UNPAID' && <div className="orders-panel">
+        <p>Payment has not been confirmed. If you just paid, refresh shortly to check confirmation.</p>
+        <button className="primary" disabled={paying} onClick={pay}>{paying ? 'Opening checkout…' : 'Pay with Stripe (test)'}</button>
+        <button className="account-button" onClick={() => window.location.reload()}>Refresh payment status</button>
+        {paymentError && <p role="alert">{paymentError}</p>}
+      </div>}
       <div className="order-detail-grid">
         <section className="orders-panel" aria-labelledby="order-items-heading">
           <h2 id="order-items-heading">Items</h2>
@@ -176,7 +195,7 @@ export default function OrderHistory({
         </div>
       ) : (
         <>
-          {confirmed && <p className="notice" role="status">Order placed. No payment was taken.</p>}
+          {confirmed && <p className="notice" role="status">Order saved. Payment confirmation will appear after checkout.</p>}
           {!result ? (
             <p role="status">Loading {orderId ? 'order details' : 'your orders'}…</p>
           ) : result.error ? (
@@ -191,7 +210,7 @@ export default function OrderHistory({
               )}
             </div>
           ) : orderId ? (
-            <OrderDetails order={result.data} formatMoney={formatMoney} />
+            <OrderDetails key={orderId} order={result.data} formatMoney={formatMoney} token={token} />
           ) : (
             <OrderList
               data={result.data}
