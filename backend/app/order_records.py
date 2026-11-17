@@ -8,8 +8,8 @@ from sqlalchemy.engine import Connection
 
 OrderStatus = Literal["placed", "processing", "shipped", "delivered"]
 ORDER_FIELDS = """
-    order_id, customer_id, status, subtotal_minor, shipping_minor, tax_minor,
-    discount_code, discount_minor, total_minor, currency, delivery_name, created_at, updated_at
+    order_id, customer_id, status, payment_status, paid_at, subtotal_minor, shipping_minor, tax_minor,
+    total_minor, currency, delivery_name, created_at, updated_at
 """
 STATUS_HISTORY_FIELDS = "history_id, old_status, new_status, changed_at"
 
@@ -18,6 +18,8 @@ class OrderSummary(BaseModel):
     order_id: UUID
     customer_id: UUID
     status: OrderStatus
+    payment_status: Literal["UNPAID", "PAID"]
+    paid_at: datetime | None
     subtotal_minor: int
     shipping_minor: int
     tax_minor: int

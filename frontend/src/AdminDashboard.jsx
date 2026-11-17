@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { request } from './api.js';
 import { adminPages, ordersCsv, productPayload, stockPayload, variantPayload } from './adminApi.js';
 import './admin.css';
+import PaymentStatus from './PaymentStatus.jsx';
 import AdminManagement from './AdminManagement.jsx';
 
 const money = (minor, currency = 'MYR') => new Intl.NumberFormat('en-MY', { style: 'currency', currency }).format(minor / 100);
@@ -845,7 +846,7 @@ function OrderTable({ orders, disabled, onDetail, onAdvance }) {
               <td>{o.delivery_name}</td>
               <td>{date(o.created_at)}</td>
               <td>{money(o.total_minor, o.currency)}</td>
-              <td>{o.status}</td>
+              <td>{o.status}<br /><PaymentStatus status={o.payment_status} /></td>
               <td>
                 <div className="admin-row-actions">
                   <button disabled={disabled} onClick={() => onDetail(o)}>
@@ -1065,7 +1066,7 @@ function OrderDetail({ order: o, disabled, onAdvance }) {
       </p>
       <p style={{ whiteSpace: "pre-wrap" }}>{o.delivery_address}</p>
       <p>
-        Status: <strong>{o.status}</strong>
+        Shipping: <strong>{o.status}</strong> · <PaymentStatus status={o.payment_status} />
       </p>
       <div className="admin-table-wrap">
         <table className="admin-live-table">

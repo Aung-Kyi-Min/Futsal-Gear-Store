@@ -247,3 +247,22 @@ Before using the updated portal, run `.venv/bin/alembic upgrade head` from `back
 For a schema managed through pgAdmin, apply
 `backend/migrations/sql/0003_staff_workspaces.sql` instead. Settings are saved for
 shop administration; storefront branding remains defined by the storefront UI.
+
+### Stripe hosted checkout (test mode)
+
+Customer checkout saves an order with `payment_status=UNPAID`, then opens Stripe's hosted card checkout. Payment and shipping are independent: `status` remains the fulfillment status (`placed`, `processing`, `shipped`, `delivered`), and only a verified webhook sets `payment_status=PAID`. Returning to the store never marks an order paid. Browser checkout returns to the exact origin where it started (validated against `CORS_ORIGINS` and `CHECKOUT_ORIGIN`), preserving the current tab’s login session even when using `127.0.0.1` instead of `localhost`.
+
+1. Install backend requirements and run `cd backend && .venv/bin/alembic upgrade head` to add payment fields, event deduplication, and the email outbox. If your existing database was initialized using the SQL scripts without Alembic tracking, apply only `backend/migrations/sql/0004_payments.sql` with your PostgreSQL client instead; do not recreate the existing schema.
+2. In `backend/.env`, set `STRIPE_SECRET_KEY=sk_test_...`, `STRIPE_WEBHOOK_SECRET=whsec_...`, and `CHECKOUT_ORIGIN=http://localhost:5173` (use your storefront origin when hosted). Keys stay on the backend; live keys and live webhook events are rejected.
+3. Run the backend and frontend as usual. Run `stripe listen --forward-to localhost:8000/api/payments/webhook` and copy its signing secret into `STRIPE_WEBHOOK_SECRET`, then restart the backend. For a hosted endpoint, register `/api/payments/webhook` in Stripe's test dashboard with `checkout.session.completed` and `checkout.session.async_payment_succeeded` and use that endpoint's signing secret.
+4. Place an order, complete Checkout using test card `4242 4242 4242 4242`, any future expiry, and any three-digit CVC. Open or refresh order details to see `PAID`. Cancelled checkout and provider failures leave the order unpaid; use **Pay with Stripe (test)** in order details to resume. Expired sessions are replaced when retrying payment.
+
+`POST /api/payments/orders/{order_id}/checkout` requires the owning customer's token and uses server-stored totals. Its provider idempotency key and order lock prevent concurrent retries from creating duplicate sessions. `POST /api/payments/webhook` verifies the raw-body HMAC and a five-minute timestamp tolerance, then checks the registered session, reference, amount, currency, test mode, and paid state.
+
+The paid transition, event record, and `email_outbox` entry commit together. A unique `(order_id, kind)` constraint ensures one queued `payment_confirmation` even for concurrent deliveries or different events about the same payment. The outbox stores recipient and order totals. Email transport/worker delivery is not configured in this app; queued messages remain durable for a worker to consume. Do not send email directly inside the webhook. A future worker should use the outbox ID as its mail provider's idempotency key before recording `sent_at`.
+
+Stock is deducted when the order is placed, as before. Unpaid/cancelled/expired checkouts retain their stock allocation; automatic abandoned-order stock release is not part of this payment flow. The legacy SQLite demo endpoint `/api/orders` remains a separate demo and does not collect payments.
+
+Run payment checks with `cd backend && .venv/bin/python -m unittest discover -s tests -v`. Set `TEST_DATABASE_URL` to a disposable PostgreSQL database to include concurrent webhook, transactional rollback, and checkout retry tests. Each integration test isolates its data in a temporary schema. Mocked provider responses test application behavior; a real Stripe sandbox checkout is still required to verify account configuration and webhook forwarding.
+
+Provider contracts: [Stripe Checkout session creation](https://docs.stripe.com/api/checkout/sessions/create) and [Stripe webhook verification and retries](https://docs.stripe.com/webhooks).

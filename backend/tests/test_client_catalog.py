@@ -35,6 +35,7 @@ class ClientCatalogTest(unittest.TestCase):
             db.exec_driver_sql((root / '0002_sample_data.sql').read_text())
             db.exec_driver_sql((root / '0003_staff_workspaces.sql').read_text())
             db.exec_driver_sql((root / '0004_discount_codes.sql').read_text())
+            db.exec_driver_sql((root / '0004_payments.sql').read_text())
         self.directory = tempfile.TemporaryDirectory()
         self.old_path = main.DB_PATH
         main.DB_PATH = Path(self.directory.name) / 'demo.db'
