@@ -1,13 +1,15 @@
 """Signed-in checkout and order history."""
-from typing import Annotated
+from typing import Annotated, Literal
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, HTTPException, Response
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 from sqlalchemy import text
+from sqlalchemy.engine import Connection
 
 from .auth import AuthDB, CurrentUser
 from .catalog import MAX_POSTGRES_ID, PageNumber, PageSize
+from .discounts import Code, discount_amount
 from .order_records import (
     ORDER_FIELDS,
     STATUS_HISTORY_FIELDS,
@@ -27,11 +29,32 @@ class CheckoutItem(BaseModel):
     quantity: int = Field(strict=True, ge=1, le=99)
 
 
-class CheckoutRequest(BaseModel):
+class OrderLines(BaseModel):
     model_config = ConfigDict(extra='forbid')
+    items: list[CheckoutItem] = Field(min_length=1, max_length=100)
+
+
+class CheckoutRequest(OrderLines):
     customer_name: Annotated[str, StringConstraints(strip_whitespace=True, min_length=2, max_length=160)]
     address: Annotated[str, StringConstraints(strip_whitespace=True, min_length=5, max_length=500)]
-    items: list[CheckoutItem] = Field(min_length=1, max_length=100)
+    discount_code: Code | None = None
+
+
+class QuoteRequest(OrderLines):
+    discount_code: Code
+
+
+class CheckoutAmounts(BaseModel):
+    subtotal_minor: int
+    discount_code: str | None
+    discount_minor: int
+    total_minor: int
+    currency: str
+
+
+class CheckoutResult(CheckoutAmounts):
+    order_id: UUID
+    status: Literal['placed'] = 'placed'
 
 
 class CustomerOrderDetail(OrderSummary):
@@ -84,8 +107,7 @@ def get_order(db: AuthDB, user: CurrentUser, response: Response, order_id: UUID)
     return {**order, 'items': order_items(db, order_id), 'status_history': history}
 
 
-@router.post('', status_code=201)
-def checkout(data: CheckoutRequest, db: AuthDB, user: CurrentUser):
+def price_order(db: Connection, data: CheckoutRequest | QuoteRequest, *, lock_stock: bool):
     quantities = {}
     for item in data.items:
         quantities[item.variant_id] = quantities.get(item.variant_id, 0) + item.quantity
@@ -94,17 +116,16 @@ def checkout(data: CheckoutRequest, db: AuthDB, user: CurrentUser):
 
     lines = []
     currencies = set()
-    # Authentication already began this connection's transaction. Commit only
-    # after the order, stock deductions, and audit rows all succeed.
+    lock_clause = 'FOR SHARE OF p, v FOR UPDATE OF i' if lock_stock else ''
     for variant_id, quantity in sorted(quantities.items()):
-        variant = db.execute(text('''
+        variant = db.execute(text(f'''
             SELECT v.variant_id, v.price_minor, v.size, v.colour, p.name, p.currency,
                    i.quantity_on_hand
             FROM product_variants v
             JOIN products p ON p.product_id = v.product_id
             JOIN inventory i ON i.variant_id = v.variant_id
             WHERE v.variant_id = :variant_id AND v.is_active AND p.is_active
-            FOR SHARE OF p, v FOR UPDATE OF i
+            {lock_clause}
         '''), {'variant_id': variant_id}).mappings().one_or_none()
         if variant is None:
             raise HTTPException(404, 'Product variant is no longer available')
@@ -114,16 +135,36 @@ def checkout(data: CheckoutRequest, db: AuthDB, user: CurrentUser):
         lines.append({**variant, 'quantity': quantity})
     if len(currencies) != 1:
         raise HTTPException(422, 'Please order products in one currency at a time')
-    total = sum(line['price_minor'] * line['quantity'] for line in lines)
-    if total > MAX_POSTGRES_ID:
+    subtotal = sum(line['price_minor'] * line['quantity'] for line in lines)
+    if subtotal > MAX_POSTGRES_ID:
         raise HTTPException(422, 'Order total exceeds the supported amount')
+    code = data.discount_code.upper() if data.discount_code else None
+    discount = discount_amount(db, code, subtotal) if code else 0
+    amounts = CheckoutAmounts(
+        subtotal_minor=subtotal, discount_code=code, discount_minor=discount,
+        total_minor=subtotal - discount, currency=next(iter(currencies)),
+    )
+    return lines, amounts
+
+
+@router.post('/quote', response_model=CheckoutAmounts)
+def quote(data: QuoteRequest, db: AuthDB, user: CurrentUser):
+    _, amounts = price_order(db, data, lock_stock=False)
+    return amounts
+
+
+@router.post('', status_code=201, response_model=CheckoutResult)
+def checkout(data: CheckoutRequest, db: AuthDB, user: CurrentUser):
+    # Hold inventory locks until the order, deductions, and audit rows commit.
+    lines, amounts = price_order(db, data, lock_stock=True)
     order_id = uuid4()
     db.execute(text('''
-        INSERT INTO orders (order_id, customer_id, subtotal_minor, total_minor, currency,
-                            delivery_name, delivery_address)
-        VALUES (:order_id, :customer_id, :total, :total, :currency, :name, :address)
-    '''), {'order_id': order_id, 'customer_id': user.user_id, 'total': total,
-           'currency': next(iter(currencies)), 'name': data.customer_name, 'address': data.address})
+        INSERT INTO orders (order_id, customer_id, subtotal_minor, discount_code,
+                            discount_minor, total_minor, currency, delivery_name, delivery_address)
+        VALUES (:order_id, :customer_id, :subtotal_minor, :discount_code,
+                :discount_minor, :total_minor, :currency, :name, :address)
+    '''), {**amounts.model_dump(), 'order_id': order_id, 'customer_id': user.user_id,
+           'name': data.customer_name, 'address': data.address})
     for line in lines:
         params = {**line, 'order_id': order_id, 'user_id': user.user_id,
                   'line_total': line['price_minor'] * line['quantity']}
@@ -145,4 +186,4 @@ def checkout(data: CheckoutRequest, db: AuthDB, user: CurrentUser):
         VALUES (:order_id, :user_id, NULL, 'placed')
     '''), {'order_id': order_id, 'user_id': user.user_id})
     db.commit()
-    return {'order_id': str(order_id), 'total_minor': total, 'currency': next(iter(currencies)), 'status': 'placed'}
+    return CheckoutResult(order_id=order_id, **amounts.model_dump())

@@ -311,6 +311,10 @@ function App() {
   const [notice, setNotice] = useState("");
   const [contactFeedback, setContactFeedback] = useState("");
   const [busy, setBusy] = useState(false);
+  const [discountCode, setDiscountCode] = useState("");
+  const [discountQuote, setDiscountQuote] = useState(null);
+  const [discountError, setDiscountError] = useState("");
+  const [discountBusy, setDiscountBusy] = useState(false);
   const [authOpen, setAuthOpen] = useState(false);
   const [authMode, setAuthMode] = useState("login");
   const [authFeedback, setAuthFeedback] = useState("");
@@ -359,6 +363,9 @@ function App() {
     setAuthOpen(false);
     setAuthFeedback("");
     setError("");
+    setDiscountCode("");
+    setDiscountQuote(null);
+    setDiscountError("");
     setCategory("All gear");
     setQuery("");
     setConfirmedOrderId(null);
@@ -399,6 +406,12 @@ function App() {
     .map((p) => ({ ...p, quantity: cart[p.id] }));
   const count = lines.reduce((sum, p) => sum + p.quantity, 0);
   const total = lines.reduce((sum, p) => sum + p.quantity * p.price_cents, 0);
+  const orderItems = lines.map((p) => ({ variant_id: p.id, quantity: p.quantity }));
+  const cartKey = JSON.stringify([orderItems, total, lines[0]?.currency]);
+  const enteredCode = discountCode.trim().toUpperCase();
+  const appliedDiscount = discountQuote?.cartKey === cartKey
+    && discountQuote.userId === user?.user_id
+    && discountQuote.discount_code === enteredCode ? discountQuote : null;
   const currencies = new Set(lines.map((p) => p.currency));
   const invalidCart =
     currencies.size > 1 ||
@@ -468,9 +481,38 @@ function App() {
       ),
     }));
   }
+  async function applyDiscount(event) {
+    event.preventDefault();
+    if (busy || discountBusy || !enteredCode || !lines.length || invalidCart) return;
+    if (!user) {
+      setAuthMode("login");
+      setAuthFeedback("Log in to apply your discount code.");
+      setAuthOpen(true);
+      return;
+    }
+    setDiscountBusy(true);
+    setDiscountError("");
+    setDiscountQuote(null);
+    try {
+      const quote = await request("/api/customer/orders/quote", {
+        token, method: "POST", body: { items: orderItems, discount_code: enteredCode },
+      });
+      setDiscountQuote({ ...quote, cartKey, userId: user.user_id });
+    } catch (err) {
+      if (err.status === 401) {
+        logout();
+        setAuthOpen(true);
+      } else {
+        setDiscountError(err.message);
+      }
+    } finally {
+      setDiscountBusy(false);
+    }
+  }
+
   async function checkout(event) {
     event.preventDefault();
-    if (busy || !lines.length || invalidCart) return;
+    if (busy || discountBusy || !lines.length || invalidCart || (user && enteredCode && !appliedDiscount)) return;
     if (!user) {
       setAuthMode("login");
       setAuthFeedback("Please log in before placing your order.");
@@ -487,16 +529,21 @@ function App() {
         body: {
           customer_name: form.customer_name,
           address: form.address,
-          items: lines.map((p) => ({ variant_id: p.id, quantity: p.quantity })),
+          items: orderItems,
+          ...(appliedDiscount && { discount_code: appliedDiscount.discount_code }),
         },
       });
       setCart({});
+      setDiscountCode("");
+      setDiscountQuote(null);
+      setDiscountError("");
       setOpen(false);
       setNotice("");
       setConfirmedOrderId(data.order_id);
       navigate("orders", data.order_id);
       await load();
     } catch (err) {
+      if (appliedDiscount && err.status === 422) setDiscountQuote(null);
       if (err.status === 401) {
         logout();
         setAuthOpen(true);
@@ -1152,9 +1199,41 @@ function App() {
                     </div>
                   ))}
                 </div>
+                <form className="checkout-discount" onSubmit={applyDiscount}>
+                  <label htmlFor="discount-code">Discount code</label>
+                  <div className="checkout-discount-controls">
+                    <input
+                      id="discount-code"
+                      autoComplete="off"
+                      placeholder="FUTSAL10"
+                      maxLength={32}
+                      value={discountCode}
+                      disabled={busy || discountBusy}
+                      onChange={(event) => {
+                        setDiscountCode(event.target.value);
+                        setDiscountQuote(null);
+                        setDiscountError("");
+                      }}
+                    />
+                    <button disabled={busy || discountBusy || invalidCart || !enteredCode}>
+                      {discountBusy ? "Applying…" : "Apply"}
+                    </button>
+                  </div>
+                  {discountError ? (
+                    <p className="error" role="alert">{discountError}</p>
+                  ) : discountQuote && !appliedDiscount && enteredCode && (
+                    <p className="muted">Apply the code again to update your total.</p>
+                  )}
+                </form>
+                {appliedDiscount && (
+                  <div className="checkout-discount-amount" role="status">
+                    <span>Discount ({appliedDiscount.discount_code})</span>
+                    <strong>−{money(appliedDiscount.discount_minor, appliedDiscount.currency)}</strong>
+                  </div>
+                )}
                 <div className="total">
                   <span>Total</span>
-                  <strong>{money(total, lines[0]?.currency)}</strong>
+                  <strong>{money(appliedDiscount?.total_minor ?? total, appliedDiscount?.currency ?? lines[0]?.currency)}</strong>
                 </div>
                 {invalidCart && (
                   <p className="error" role="alert">
@@ -1198,7 +1277,7 @@ function App() {
                       autoComplete="street-address"
                     />
                   </label>
-                  <button className="primary" disabled={busy || invalidCart}>
+                  <button className="primary" disabled={busy || discountBusy || invalidCart || Boolean(user && enteredCode && !appliedDiscount)}>
                     {busy
                       ? "Placing order…"
                       : user

@@ -38,6 +38,10 @@ The initial migration creates role, user, category, brand, product, product vari
 
 If you prefer pgAdmin, open `backend/migrations/sql/0001_initial_erd.sql` in the Query Tool while connected to `futsal_gear_store` and execute it. Use either the SQL file or Alembic on an empty database, not both. This creates the schema and role rows; it does not import old SQLite products because that catalog has no brand, SKU, size, or colour data to fill the new required fields.
 
+For a database set up through pgAdmin, run `backend/migrations/sql/0003_staff_workspaces.sql` once in the same database after the initial schema. It enables the `processing` order status and creates shop settings. For a database managed by Alembic, run `alembic upgrade head` to apply the equivalent migration.
+
+For discount codes, run `backend/migrations/sql/0004_discount_codes.sql` once after the staff workspace script if you use pgAdmin. If you use Alembic, run `alembic upgrade head`. Existing orders start with a discount of zero and keep their original totals.
+
 ## PostgreSQL sample data
 
 After creating the PostgreSQL schema, open `backend/migrations/sql/0002_sample_data.sql` in pgAdmin's Query Tool on the same database and execute the entire file. It adds 8 fictional users, 10 products, 28 size/colour variants, current inventory, and 8 orders with matching items, stock movements, and status histories. Prices are illustrative MYR values stored in sen. There are out-of-stock and low-stock examples, an inactive customer, and orders in every supported status.
@@ -163,6 +167,14 @@ The signed-in name and email prefill checkout. Placing an order requires login a
 After checkout, the store opens the new order's details. Select **My orders** in the header to view past orders and their current status. Each order shows purchased items, totals, delivery information, and status updates.
 
 In Postman, send `GET /api/customer/orders?page=1&page_size=20` with the customer's bearer token. Copy an `order_id` and send `GET /api/customer/orders/{order_id}` with the same token. History is scoped to the signed-in customer. Another customer's order returns `404`, and requests without a valid token return `401`.
+
+### Discount codes
+
+In the Manager workspace, open **Discount codes → Add discount code**. Enter a code such as `FUTSAL10`, a whole percentage from 1 to 100, and an expiry date. Codes are case-insensitive and can be used through the end of that date in Malaysia.
+
+In the kit bag, sign in, enter the code, and click **Apply** to see the server-calculated discount and total. Checkout validates the code again and stores the code, the discount in minor units, and the final total on the order.
+
+For Postman, use a staff bearer token with `POST /api/admin/discount-codes` and send `code`, `percent_off`, and `expires_on` (YYYY-MM-DD). Use a customer bearer token with `POST /api/customer/orders/quote` and send `items` and `discount_code` to preview. Pass the same optional `discount_code` with the checkout request. Invalid or expired codes return `422`.
 
 ```json
 {

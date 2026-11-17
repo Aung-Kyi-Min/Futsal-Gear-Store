@@ -2,13 +2,14 @@ import { request } from './api.js';
 
 export async function adminPages(resource, token, signal) {
   const rows = [];
+  const field = resource.replaceAll('-', '_');
   let page = 1;
   let data;
   do {
     data = await request(`/api/admin/${resource}?page=${page}&page_size=100`, { token, signal });
-    rows.push(...data[resource]);
+    rows.push(...data[field]);
     page += 1;
-  } while (data[resource].length && rows.length < data.total);
+  } while (data[field].length && rows.length < data.total);
   return rows;
 }
 

@@ -7,8 +7,8 @@ import AdminManagement from './AdminManagement.jsx';
 const money = (minor, currency = 'MYR') => new Intl.NumberFormat('en-MY', { style: 'currency', currency }).format(minor / 100);
 const date = value => new Intl.DateTimeFormat('en-MY', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'Asia/Kuala_Lumpur' }).format(new Date(value));
 const nextStatus = { placed: 'processing', processing: 'shipped', shipped: 'delivered' };
-const emptyData = { products: [], orders: [], inventory: [], categories: [], brands: [], managers: [], activity: [], settings: null };
-const sections = [['Overview', '◫'], ['Orders', '↗'], ['Products', '◇'], ['Inventory', '▤']];
+const emptyData = { products: [], orders: [], inventory: [], categories: [], brands: [], managers: [], activity: [], settings: null, discounts: [] };
+const sections = [['Overview', '◫'], ['Orders', '↗'], ['Products', '◇'], ['Inventory', '▤'], ['Discount codes', '%']];
 
 export default function AdminDashboard({ user, token, sessionLoading = false, onLogin, onLogout, onExit }) {
   const [section, setSection] = useState('Overview');
@@ -51,11 +51,12 @@ export default function AdminDashboard({ user, token, sessionLoading = false, on
         if (version === generation.current) setData({ ...emptyData, managers, activity, settings });
         return;
       }
-      const [products, orders, inventory, categories, brands] = await Promise.all([
+      const [products, orders, inventory, categories, brands, discounts] = await Promise.all([
         adminPages('products', token, signal), adminPages('orders', token, signal),
         adminPages('inventory', token, signal), request('/api/categories', { signal }), request('/api/brands', { signal }),
+        adminPages('discount-codes', token, signal),
       ]);
-      if (version === generation.current) setData({ ...emptyData, products, orders, inventory, categories, brands });
+      if (version === generation.current) setData({ ...emptyData, products, orders, inventory, categories, brands, discounts });
     } catch (err) {
       if (version !== generation.current) return;
       if (err.status === 401) { logoutRef.current(); return; }
@@ -102,7 +103,7 @@ export default function AdminDashboard({ user, token, sessionLoading = false, on
       if (err.status === 401) { onLogout(); return; }
       setModalError(err.message); setError(err.message);
       // Refresh stale quantities/status after another staff member changed them.
-      if (err.status === 409) { setModal(null); await reload(); setError(err.message); }
+      if (err.status === 409 && path !== 'discount-codes') { setModal(null); await reload(); setError(err.message); }
     } finally { setBusy(false); }
   }
 
@@ -113,6 +114,10 @@ export default function AdminDashboard({ user, token, sessionLoading = false, on
     try {
       if (kind === 'manager-form') {
         mutate('managers', 'POST', values, 'Manager account created.');
+      } else if (kind === 'discount-form') {
+        mutate('discount-codes', 'POST', {
+          code: values.code.trim(), percent_off: Number(values.percent_off), expires_on: values.expires_on,
+        }, 'Discount code created.');
       } else if (kind === 'product-form') {
         mutate(value ? `products/${value.product_id}` : 'products', value ? 'PATCH' : 'POST', productPayload(values), 'Product saved.');
       } else if (kind === 'variant-form') {
@@ -449,6 +454,34 @@ export default function AdminDashboard({ user, token, sessionLoading = false, on
               />
             </section>
           )}
+          {!isAdmin && currentSection === "Discount codes" && (
+            <section className="panel table-panel">
+              <PanelHeader
+                title="Discount codes"
+                subtitle="Codes are valid through the expiry date in Malaysia"
+                action="Add discount code"
+                onAction={disabled ? undefined : () => {
+                  setModalError("");
+                  setModal({ kind: "discount-form" });
+                }}
+              />
+              <div className="admin-table-wrap">
+                <table>
+                  <thead><tr><th>Code</th><th>Discount</th><th>Expiry date</th></tr></thead>
+                  <tbody>
+                    {data.discounts.map((discount) => (
+                      <tr key={discount.code}>
+                        <td>{discount.code}</td>
+                        <td>{discount.percent_off}%</td>
+                        <td><time dateTime={discount.expires_on}>{discount.expires_on}</time></td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              {!loading && !data.discounts.length && <p>No discount codes yet.</p>}
+            </section>
+          )}
           {isAdmin && (
             <AdminManagement
               section={currentSection}
@@ -499,6 +532,7 @@ export default function AdminDashboard({ user, token, sessionLoading = false, on
             )}
             {[
               "manager-form",
+              "discount-form",
               "product-form",
               "variant-form",
               "stock",
@@ -510,6 +544,22 @@ export default function AdminDashboard({ user, token, sessionLoading = false, on
                 key={`${modal.kind}-${modal.value?.product_id || modal.value?.variant_id || "new"}`}
               >
                 <fieldset disabled={busy}>
+                  {modal.kind === "discount-form" && (
+                    <>
+                      <label>
+                        Code
+                        <input name="code" placeholder="FUTSAL10" required minLength={3} maxLength={32} />
+                      </label>
+                      <label>
+                        Percentage off
+                        <input name="percent_off" type="number" required min={1} max={100} step={1} />
+                      </label>
+                      <label>
+                        Expiry date
+                        <input name="expires_on" type="date" required />
+                      </label>
+                    </>
+                  )}
                   {modal.kind === "manager-form" && (
                     <>
                       <p>
@@ -721,6 +771,7 @@ export default function AdminDashboard({ user, token, sessionLoading = false, on
 function modalTitle(modal) {
   return {
     "manager-form": "Create manager account",
+    "discount-form": "Add discount code",
     "product-form": modal.value ? "Edit product" : "Add product",
     "variant-form": modal.value ? "Edit variant" : "Add variant",
     stock: "Adjust stock",
@@ -1047,6 +1098,9 @@ function OrderDetail({ order: o, disabled, onAdvance }) {
         {money(o.shipping_minor, o.currency)} · Tax:{" "}
         {money(o.tax_minor, o.currency)}
       </p>
+      {o.discount_code && (
+        <p>Discount ({o.discount_code}): −{money(o.discount_minor, o.currency)}</p>
+      )}
       <p>
         <strong>Total: {money(o.total_minor, o.currency)}</strong>
       </p>
