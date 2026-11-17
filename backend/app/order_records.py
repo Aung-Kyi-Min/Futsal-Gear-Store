@@ -9,7 +9,7 @@ from sqlalchemy.engine import Connection
 OrderStatus = Literal["placed", "processing", "shipped", "delivered"]
 ORDER_FIELDS = """
     order_id, customer_id, status, subtotal_minor, shipping_minor, tax_minor,
-    total_minor, currency, delivery_name, created_at, updated_at
+    discount_code, discount_minor, total_minor, currency, delivery_name, created_at, updated_at
 """
 STATUS_HISTORY_FIELDS = "history_id, old_status, new_status, changed_at"
 
@@ -21,6 +21,8 @@ class OrderSummary(BaseModel):
     subtotal_minor: int
     shipping_minor: int
     tax_minor: int
+    discount_code: str | None
+    discount_minor: int
     total_minor: int
     currency: str
     delivery_name: str

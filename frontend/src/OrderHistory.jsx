@@ -99,6 +99,9 @@ function OrderDetails({ order, formatMoney }) {
           </ul>
           <dl className="order-totals">
             <div><dt>Subtotal</dt><dd>{money(order.subtotal_minor)}</dd></div>
+            {order.discount_code && (
+              <div><dt>Discount ({order.discount_code})</dt><dd>−{money(order.discount_minor)}</dd></div>
+            )}
             <div><dt>Shipping</dt><dd>{money(order.shipping_minor)}</dd></div>
             <div><dt>Tax</dt><dd>{money(order.tax_minor)}</dd></div>
             <div className="order-total"><dt>Total</dt><dd>{money(order.total_minor)}</dd></div>
