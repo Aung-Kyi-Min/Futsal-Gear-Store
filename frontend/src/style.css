@@ -1123,8 +1123,12 @@ header {
 
 .products article>p {
     padding: 0 15px;
-    min-height: 36px;
-    line-height: 1.6
+    min-height: 42px;
+    line-height: 1.6;
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    overflow: hidden
 }
 
 .product-meta {

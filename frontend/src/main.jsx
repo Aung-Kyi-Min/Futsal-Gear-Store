@@ -10,14 +10,7 @@ const money = (cents, currency = "MYR") =>
   new Intl.NumberFormat("en-MY", { style: "currency", currency }).format(
     cents / 100,
   );
-function ProductCard({ p, cart, change, onSelect }) {
-  const [selectedId, setSelectedId] = useState(null);
-  const selected =
-    p.variants.find((v) => v.id === selectedId) ||
-    p.variants.find((v) => v.stock > 0) ||
-    p.variants[0];
-  const quantity = selected ? cart[selected.id] || 0 : 0;
-  const stock = selected?.stock || 0;
+function ProductCard({ p, onSelect }) {
   return (
     <article>
       <button className="product-image-link" type="button" onClick={() => onSelect(p)} aria-label={`View details for ${p.name}`}>
@@ -34,49 +27,10 @@ function ProductCard({ p, cart, change, onSelect }) {
       <div className="product-heading">
         <button className="product-title-link" type="button" onClick={() => onSelect(p)}><h3>{p.name}</h3></button>
         <strong>
-          {money(selected?.price_cents ?? p.price_cents, p.currency)}
+          {money(p.price_cents, p.currency)}
         </strong>
       </div>
-      <p>
-        {p.brand} · {p.description}
-      </p>
-      <label className="variant-picker">
-        Size / colour
-        <select
-          aria-label={`Size and colour for ${p.name}`}
-          value={selected?.id || ""}
-          disabled={!p.variants.length}
-          onChange={(event) => setSelectedId(Number(event.target.value))}
-        >
-          {!p.variants.length && (
-            <option value="">No variants available</option>
-          )}
-          {p.variants.map((v) => (
-            <option key={v.id} value={v.id}>
-              {v.size} / {v.colour}
-              {!v.stock ? " — Sold out" : ""}
-            </option>
-          ))}
-        </select>
-      </label>
-      <div className="product-meta">
-        <span className={stock ? "in-stock" : "out-stock"}>
-          {stock ? "In stock" : "Sold out"}
-        </span>
-        {stock > 0 && stock < 5 && <span>Only {stock} left</span>}
-      </div>
-      <button
-        className="add"
-        disabled={!stock || quantity >= stock || quantity >= 99}
-        onClick={() => change(selected, 1)}
-      >
-        {!stock
-          ? "Sold out"
-          : quantity >= Math.min(stock, 99)
-            ? "Bag limit reached"
-            : "Add to kit bag"}{" "}
-        <span>+</span>
-      </button>
+      <p>{p.description}</p>
     </article>
   );
 }
@@ -824,9 +778,6 @@ function App() {
                     <ProductCard
                       key={p.id}
                       p={p}
-                      cart={cart}
-                      change={change}
-                      money={money}
                       onSelect={(product) => navigate("product", product)}
                     />
                   ))}
@@ -919,9 +870,6 @@ function App() {
                       <ProductCard
                         key={p.id}
                         p={p}
-                        cart={cart}
-                        change={change}
-                        money={money}
                         onSelect={(product) => navigate("product", product)}
                       />
                     ))}
