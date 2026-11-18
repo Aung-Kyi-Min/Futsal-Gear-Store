@@ -1,8 +1,9 @@
 """Snapshot and render paid order summaries for customer emails."""
 import json
+import os
 from email.headerregistry import Address
 from email.message import EmailMessage
-from email.utils import formatdate
+from email.utils import formatdate, make_msgid
 from html import escape
 from mimetypes import guess_type
 from pathlib import Path
@@ -47,7 +48,9 @@ def amount(minor: int, currency: str) -> str:
     return f"{minor:,} {currency} minor units"
 
 
-def receipt_image(image_url: str | None, images: dict) -> str | None:
+def receipt_image(
+    image_url: str | None, images: dict, sender_domain: str, public_origin: str,
+) -> str | None:
     if not image_url:
         return None
     try:
@@ -68,6 +71,8 @@ def receipt_image(image_url: str | None, images: dict) -> str | None:
     mime = guess_type(path.name)[0]
     if mime not in ("image/jpeg", "image/png", "image/gif", "image/webp"):
         return None
+    if public_origin:
+        return public_origin + parsed.path
     if path not in images:
         try:
             with path.open("rb") as photo:
@@ -76,8 +81,8 @@ def receipt_image(image_url: str | None, images: dict) -> str | None:
             return None
         if len(content) > 1_000_000:
             return None
-        images[path] = (f"product-{len(images) + 1}@courtsupply", content, mime.split("/")[1])
-    return f"cid:{images[path][0]}"
+        images[path] = (make_msgid(domain=sender_domain), content, mime.split("/")[1])
+    return f"cid:{images[path][0][1:-1]}"
 
 
 def confirmation_message(job, from_email: str) -> EmailMessage:
@@ -85,6 +90,17 @@ def confirmation_message(job, from_email: str) -> EmailMessage:
     currency = payload["currency"]
     total = amount(payload["total_minor"], currency)
     reference = str(job["order_id"])
+    sender_domain = from_email.rsplit("@", 1)[1]
+    try:
+        origin = urlsplit(os.getenv("RECEIPT_IMAGE_ORIGIN", "").strip())
+    except ValueError:
+        origin = urlsplit("")
+    public_origin = ""
+    if (origin.scheme == "https" and origin.hostname
+            and origin.hostname not in ("localhost", "127.0.0.1", "::1")
+            and origin.username is None and not (origin.query or origin.fragment)
+            and origin.path in ("", "/")):
+        public_origin = f"https://{origin.netloc}"
     text_lines = [
         "Thank you for shopping with Court Supply. We received your payment.",
         "", f"Order reference: {reference}", "", "Order summary",
@@ -98,7 +114,7 @@ def confirmation_message(job, from_email: str) -> EmailMessage:
         line_total = amount(item["line_total_minor"], currency)
         quantity = str(item["quantity"])
         text_lines.extend([name, f"{variant} | Quantity {quantity}", f"Unit price: {unit_price} | Total: {line_total}", ""])
-        source = receipt_image(item.get("image_url"), images)
+        source = receipt_image(item.get("image_url"), images, sender_domain, public_origin)
         image = (
             f'<img src="{escape(source, quote=True)}" alt="{escape(name, quote=True)}"'
             ' width="88" height="88" style="display:block;object-fit:contain;border-radius:6px">'
@@ -168,10 +184,17 @@ def confirmation_message(job, from_email: str) -> EmailMessage:
     message["To"] = Address(addr_spec=job["recipient"])
     message["Subject"] = "Court Supply payment confirmation"
     message["Date"] = formatdate(usegmt=True)
-    message["Message-ID"] = f"<payment-{job['email_id']}-{reference}@{from_email.rsplit('@', 1)[1]}>"
+    message["Message-ID"] = f"<payment-{job['email_id']}-{reference}@{sender_domain}>"
     message.set_content("\n".join(text_lines) + "\n")
     message.add_alternative(html, subtype="html")
-    html_part = message.get_payload()[-1]
-    for cid, content, subtype in images.values():
-        html_part.add_related(content, maintype="image", subtype=subtype, cid=f"<{cid}>", disposition="inline")
+    if images:
+        related = message.get_payload()[-1]
+        root_id = make_msgid(domain=sender_domain)
+        related["Content-ID"] = root_id
+        related.make_related()
+        # make_related only moves Content-* headers into the HTML root.
+        related.set_param("type", "text/html")
+        related.set_param("start", root_id)
+        for cid, content, subtype in images.values():
+            related.add_related(content, maintype="image", subtype=subtype, cid=cid, disposition="inline")
     return message

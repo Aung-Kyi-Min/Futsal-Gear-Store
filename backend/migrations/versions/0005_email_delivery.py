@@ -4,7 +4,7 @@ from pathlib import Path
 from alembic import op
 
 revision = "0005_email_delivery"
-down_revision = "0004_order_features"
+down_revision = ("0004_order_features", "0004_discounts_and_payments")
 branch_labels = None
 depends_on = None
 

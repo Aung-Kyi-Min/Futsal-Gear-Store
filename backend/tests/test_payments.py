@@ -7,6 +7,8 @@ import smtplib
 import time
 import unittest
 from concurrent.futures import ThreadPoolExecutor
+from email import policy
+from email.parser import BytesParser
 from unittest.mock import patch
 
 import httpx
@@ -42,6 +44,27 @@ class SignatureTest(unittest.TestCase):
 
 
 class ReceiptMessageTest(unittest.TestCase):
+    @patch.dict(os.environ, {'RECEIPT_IMAGE_ORIGIN': 'https://store.example.com/'})
+    def test_hosted_photo_is_inside_order_summary_with_no_image_attachment(self):
+        message = confirmation_message({
+            'email_id': 1, 'order_id': 'example-order', 'recipient': 'player@example.com',
+            'payload': {
+                'currency': 'MYR', 'total_minor': 200,
+                'items': [{
+                    'product_name_snapshot': 'Training Marker Cones - 10 Pack',
+                    'size_snapshot': '10 Pack', 'colour_snapshot': 'Orange', 'quantity': 1,
+                    'unit_price_minor': 200, 'line_total_minor': 200,
+                    'image_url': '/images/training-cones-orange.jpg',
+                }],
+            },
+        }, 'store@example.com')
+        html = message.get_body(preferencelist=('html',)).get_content()
+        summary = html.split('Order summary</h2>', 1)[1].split('</table>', 1)[0]
+        self.assertIn('src="https://store.example.com/images/training-cones-orange.jpg"', summary)
+        self.assertEqual([part.get_content_type() for part in message.iter_parts()],
+                         ['text/plain', 'text/html'])
+
+    @patch.dict(os.environ, {'RECEIPT_IMAGE_ORIGIN': ''})
     def test_html_and_plain_summary_embed_local_photos_and_escape_customer_content(self):
         order_id = '20000000-0000-4000-8000-000000000001'
         item = {
@@ -60,8 +83,10 @@ class ReceiptMessageTest(unittest.TestCase):
                 'delivery_name': 'Player & Team', 'delivery_address': 'Court <1>\nKuala Lumpur',
             },
         }, 'store@example.com')
+        message = BytesParser(policy=policy.default).parsebytes(message.as_bytes(policy=policy.SMTP))
         plain = message.get_body(preferencelist=('plain',)).get_content()
-        html = message.get_body(preferencelist=('html',)).get_content()
+        html_part = message.get_body(preferencelist=('html',))
+        html = html_part.get_content()
         self.assertIn('Unit price: MYR 100.00', plain)
         self.assertIn('Amount paid: MYR 360.00', plain)
         self.assertIn('Discount (FUTSAL10)', html)
@@ -69,11 +94,15 @@ class ReceiptMessageTest(unittest.TestCase):
         self.assertIn('&lt;script&gt;', html)
         self.assertNotIn('<script>', html)
         self.assertNotIn('javascript:', html)
-        self.assertIn('src="cid:product-1@courtsupply"', html)
-        photos = [part for part in message.walk() if part.get_content_maintype() == 'image']
-        self.assertEqual(len(photos), 1)
-        self.assertEqual(photos[0]['Content-ID'], '<product-1@courtsupply>')
-        self.assertGreater(len(photos[0].get_payload(decode=True)), 0)
+        related = message.get_body(preferencelist=('related',))
+        self.assertEqual(related.get_param('type'), 'text/html')
+        self.assertEqual(related.get_param('start'), html_part['Content-ID'])
+        root, photo = related.get_payload()
+        self.assertIs(root, html_part)
+        self.assertEqual(photo.get_content_type(), 'image/jpeg')
+        self.assertEqual(photo.get_content_disposition(), 'inline')
+        self.assertIn(f'src="cid:{photo["Content-ID"][1:-1]}"', html)
+        self.assertGreater(len(photo.get_payload(decode=True)), 0)
 
 
 @unittest.skipUnless(os.getenv('TEST_DATABASE_URL'), 'TEST_DATABASE_URL not configured')
