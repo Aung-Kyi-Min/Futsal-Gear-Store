@@ -389,6 +389,11 @@ function App() {
     load();
   }, []);
   useEffect(() => {
+    const refreshOnFocus = () => load();
+    window.addEventListener('focus', refreshOnFocus);
+    return () => window.removeEventListener('focus', refreshOnFocus);
+  }, []);
+  useEffect(() => {
     const onPopState = () => setPath(window.location.pathname);
     window.addEventListener("popstate", onPopState);
     return () => window.removeEventListener("popstate", onPopState);

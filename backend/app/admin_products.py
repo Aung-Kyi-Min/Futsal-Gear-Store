@@ -61,6 +61,7 @@ class ProductPatch(TypedDict, total=False):
     image_url: ImageURL | None
     currency: Currency
     is_active: bool
+    sync_variant_prices: bool
 
 
 class VariantCreate(BaseModel):
@@ -154,24 +155,52 @@ def create_product(db: AuthDB, data: ProductCreate):
 
 @router.patch("/products/{product_id}", response_model=AdminProductDetail)
 def update_product(db: AuthDB, product_id: CatalogID, data: ProductPatch):
-    if not data:
+    sync_variant_prices = data.get("sync_variant_prices", False)
+    product_fields = {column: value for column, value in data.items() if column != "sync_variant_prices"}
+    if not product_fields and not sync_variant_prices:
         raise HTTPException(422, "Provide at least one product field to update")
+    current_base_price = db.execute(
+        text("SELECT base_price_minor FROM products WHERE product_id = :product_id FOR UPDATE"),
+        {"product_id": product_id},
+    ).scalar_one_or_none()
+    if current_base_price is None:
+        raise HTTPException(404, "Product not found")
     # ProductPatch rejects keys outside the declared column names.
-    assignments = ", ".join(f"{column} = :{column}" for column in data)
+    assignments = ", ".join(f"{column} = :{column}" for column in product_fields)
     try:
-        updated_id = db.execute(
-            text(f"""
-                UPDATE products SET {assignments}, updated_at = clock_timestamp()
-                WHERE product_id = :product_id RETURNING product_id
-            """),
-            {**data, "product_id": product_id},
-        ).scalar_one_or_none()
+        if product_fields:
+            updated_id = db.execute(
+                text(f"""
+                    UPDATE products SET {assignments}, updated_at = clock_timestamp()
+                    WHERE product_id = :product_id RETURNING product_id
+                """),
+                {**product_fields, "product_id": product_id},
+            ).scalar_one_or_none()
+        else:
+            updated_id = product_id
     except IntegrityError as exc:
         if isinstance(exc.orig, ForeignKeyViolation):
             raise HTTPException(404, "Category or brand not found") from exc
         raise
     if updated_id is None:
         raise HTTPException(404, "Product not found")
+    new_base_price = product_fields.get("base_price_minor", current_base_price)
+    if "base_price_minor" in product_fields and new_base_price is not None:
+        # The storefront displays variant prices. Keep them aligned whenever
+        # staff edits the product price, including variants that had drifted
+        # from the previous base price. The explicit flag also lets staff
+        # repair a mismatch when re-saving the same base price.
+        db.execute(
+            text("UPDATE product_variants SET price_minor = :price WHERE product_id = :product_id"),
+            {"product_id": product_id, "price": new_base_price},
+        )
+    elif sync_variant_prices and new_base_price is not None:
+        # Allow repairing a stale variant price even if the base price itself
+        # was not changed in this edit.
+        db.execute(
+            text("UPDATE product_variants SET price_minor = :price WHERE product_id = :product_id"),
+            {"product_id": product_id, "price": new_base_price},
+        )
     product = product_detail(db, updated_id, include_inactive=True)
     db.commit()
     return product

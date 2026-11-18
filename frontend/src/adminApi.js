@@ -6,7 +6,7 @@ export async function adminPages(resource, token, signal) {
   let page = 1;
   let data;
   do {
-    data = await request(`/api/admin/${resource}?page=${page}&page_size=100`, { token, signal });
+    data = await request(`/api/admin/${resource}?page=${page}&page_size=100`, { token, signal, cache: 'no-store' });
     rows.push(...data[field]);
     page += 1;
   } while (data[field].length && rows.length < data.total);

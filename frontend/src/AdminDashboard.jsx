@@ -23,6 +23,7 @@ export default function AdminDashboard({ user, token, sessionLoading = false, on
   const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const [discountError, setDiscountError] = useState('');
   const [notice, setNotice] = useState('');
   const [modal, setModal] = useState(null);
   const [modalError, setModalError] = useState('');
@@ -41,7 +42,7 @@ export default function AdminDashboard({ user, token, sessionLoading = false, on
     controller.current?.abort();
     controller.current = new AbortController();
     const signal = controller.current.signal;
-    setLoading(true); setError('');
+    setLoading(true); setError(''); setDiscountError('');
     try {
       if (isAdmin) {
         const [managers, activity, settings] = await Promise.all([
@@ -52,16 +53,37 @@ export default function AdminDashboard({ user, token, sessionLoading = false, on
         if (version === generation.current) setData({ ...emptyData, managers, activity, settings });
         return;
       }
-      const [products, orders, inventory, categories, brands, discounts] = await Promise.all([
-        adminPages('products', token, signal), adminPages('orders', token, signal),
-        adminPages('inventory', token, signal), request('/api/categories', { signal }), request('/api/brands', { signal }),
-        adminPages('discount-codes', token, signal),
+      const coreResults = await Promise.allSettled([
+        adminPages('products', token, signal),
+        adminPages('orders', token, signal),
+        adminPages('inventory', token, signal),
+        request('/api/categories', { signal, cache: 'no-store' }),
+        request('/api/brands', { signal, cache: 'no-store' }),
       ]);
-      if (version === generation.current) setData({ ...emptyData, products, orders, inventory, categories, brands, discounts });
+      if (version !== generation.current || signal.aborted) return;
+      const coreNames = ['products', 'orders', 'inventory', 'categories', 'brands'];
+      const unauthorized = coreResults.find(result => result.status === 'rejected' && result.reason?.status === 401);
+      if (unauthorized) { logoutRef.current(); return; }
+      const coreData = Object.fromEntries(coreResults.map((result, index) => [
+        coreNames[index], result.status === 'fulfilled' ? result.value : [],
+      ]));
+      const coreErrors = coreResults.flatMap((result, index) => result.status === 'rejected'
+        ? [`${coreNames[index]}: ${result.reason?.message || 'request failed'}`] : []);
+      if (coreErrors.length) setError(`Some dashboard data could not be loaded (${coreErrors.join('; ')}).`);
+      if (version === generation.current) setData({ ...emptyData, ...coreData });
+      let discounts = [];
+      try {
+        discounts = await adminPages('discount-codes', token, signal);
+      } catch (discountLoadError) {
+        if (version !== generation.current || signal.aborted) return;
+        if (discountLoadError.status === 401) { logoutRef.current(); return; }
+        setDiscountError(discountLoadError.message);
+      }
+      if (version === generation.current) setData(current => ({ ...current, discounts }));
     } catch (err) {
       if (version !== generation.current) return;
       if (err.status === 401) { logoutRef.current(); return; }
-      setError(err.message); setData(emptyData);
+      setError(err.message);
     } finally { if (version === generation.current) setLoading(false); }
   }, [token, isAdmin]);
 
@@ -108,7 +130,19 @@ export default function AdminDashboard({ user, token, sessionLoading = false, on
     } finally { setBusy(false); }
   }
 
-  function editProduct(product = null) { setModalError(''); setModal({ kind: 'product-form', value: product }); }
+  async function editProduct(product = null) {
+    setModalError('');
+    if (!product) { setModal({ kind: 'product-form', value: null }); return; }
+    setDetailLoading(true); setError('');
+    const version = generation.current;
+    try {
+      const detail = await request(`/api/admin/products/${product.product_id}`, { token, cache: 'no-store' });
+      if (version === generation.current) setModal({ kind: 'product-form', value: detail });
+    } catch (err) {
+      if (err.status === 401) onLogout();
+      else setError(err.message);
+    } finally { setDetailLoading(false); }
+  }
   function formSubmit(event, kind, value) {
     event.preventDefault();
     const values = Object.fromEntries(new FormData(event.currentTarget));
@@ -120,7 +154,9 @@ export default function AdminDashboard({ user, token, sessionLoading = false, on
           code: values.code.trim(), percent_off: Number(values.percent_off), expires_on: values.expires_on,
         }, 'Discount code created.');
       } else if (kind === 'product-form') {
-        mutate(value ? `products/${value.product_id}` : 'products', value ? 'PATCH' : 'POST', productPayload(values), 'Product saved.');
+        const payload = productPayload(values);
+        if (value) payload.sync_variant_prices = values.sync_variant_prices === 'on';
+        mutate(value ? `products/${value.product_id}` : 'products', value ? 'PATCH' : 'POST', payload, value && payload.sync_variant_prices ? 'Product saved and all variant prices synchronized.' : 'Product saved.');
       } else if (kind === 'variant-form') {
         const path = `products/${modal.productId}/variants${value ? '/' + value.variant_id : ''}`;
         mutate(path, value ? 'PATCH' : 'POST', variantPayload(values), 'Variant saved. Set its stock in Inventory.');
@@ -466,6 +502,7 @@ export default function AdminDashboard({ user, token, sessionLoading = false, on
                   setModal({ kind: "discount-form" });
                 }}
               />
+              {discountError && <p className="admin-error" role="alert">Discount codes are unavailable: {discountError}. If this database was set up in pgAdmin, run <code>backend/migrations/sql/0004_discount_codes.sql</code> against the same database, then refresh.</p>}
               <div className="admin-table-wrap">
                 <table>
                   <thead><tr><th>Code</th><th>Discount</th><th>Expiry date</th></tr></thead>
@@ -480,7 +517,7 @@ export default function AdminDashboard({ user, token, sessionLoading = false, on
                   </tbody>
                 </table>
               </div>
-              {!loading && !data.discounts.length && <p>No discount codes yet.</p>}
+              {!loading && !discountError && !data.discounts.length && <p>No discount codes yet.</p>}
             </section>
           )}
           {isAdmin && (
@@ -978,6 +1015,10 @@ function ProductFields({ value: p, categories, brands }) {
           defaultValue={p ? (p.base_price_minor / 100).toFixed(2) : ""}
         />
       </label>
+      {p && <>
+        <label className="admin-checkbox"><input type="checkbox" name="sync_variant_prices" defaultChecked={p.variants?.some(variant => variant.price_minor !== p.base_price_minor)} /> Apply this price to every size / colour variant</label>
+        <p className="form-help">This is selected automatically when variant prices differ from the base price. Uncheck it to preserve custom prices.</p>
+      </>}
       <label>
         Currency
         <input

@@ -51,7 +51,7 @@ export async function loadCatalog() {
   let page = 1;
   let data;
   do {
-    data = await request(`/api/products?page=${page}&page_size=100`);
+    data = await request(`/api/products?page=${page}&page_size=100`, { cache: 'no-store' });
     products.push(...data.products.map(normalizeProduct));
     page += 1;
   } while (data.products.length && products.length < data.total);
