@@ -13,6 +13,27 @@ export async function adminPages(resource, token, signal) {
   return rows;
 }
 
+export async function loadManagerWorkspace(token, signal) {
+  const requests = {
+    products: adminPages('products', token, signal),
+    orders: adminPages('orders', token, signal),
+    inventory: adminPages('inventory', token, signal),
+    categories: request('/api/categories', { signal }),
+    brands: request('/api/brands', { signal }),
+    discounts: adminPages('discount-codes', token, signal),
+  };
+  const results = await Promise.allSettled(Object.values(requests));
+  const data = {};
+  const failed = [];
+  Object.keys(requests).forEach((resource, index) => {
+    const result = results[index];
+    if (result.status === 'fulfilled') data[resource] = result.value;
+    else if (result.reason?.status === 401) throw result.reason;
+    else failed.push(resource);
+  });
+  return { data, failed };
+}
+
 export function minorUnits(value) {
   const amount = String(value).trim();
   if (!/^\d+(\.\d{1,2})?$/.test(amount)) throw new Error('Enter a non-negative price with up to two decimal places.');

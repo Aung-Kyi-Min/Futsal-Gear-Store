@@ -55,6 +55,7 @@ class CheckoutAmounts(BaseModel):
 class CheckoutResult(CheckoutAmounts):
     order_id: UUID
     status: Literal['placed'] = 'placed'
+    payment_status: Literal['UNPAID'] = 'UNPAID'
 
 
 class CustomerOrderDetail(OrderSummary):
@@ -185,9 +186,6 @@ def checkout(data: CheckoutRequest, db: AuthDB, user: CurrentUser):
         INSERT INTO order_status_history (order_id, changed_by_user_id, old_status, new_status)
         VALUES (:order_id, :user_id, NULL, 'placed')
     '''), {'order_id': order_id, 'user_id': user.user_id})
+    result = CheckoutResult(order_id=order_id, **amounts.model_dump())
     db.commit()
-    return {
-        **amounts.model_dump(),
-        'order_id': str(order_id),
-        'status': 'placed',
-    }
+    return result

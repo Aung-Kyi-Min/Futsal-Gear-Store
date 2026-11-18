@@ -1,8 +1,10 @@
+import os
 import tempfile
 import unittest
 from contextlib import closing
 from pathlib import Path
 from sqlite3 import IntegrityError
+from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 from app import main
@@ -13,7 +15,8 @@ class StoreTest(unittest.TestCase):
         self.directory = tempfile.TemporaryDirectory()
         main.DB_PATH = Path(self.directory.name) / 'test.db'
         self.client = TestClient(main.app)
-        self.client.__enter__()
+        with patch.dict(os.environ, {'SMTP_HOST': ''}):
+            self.client.__enter__()
 
     def tearDown(self):
         self.client.__exit__(None, None, None)
@@ -94,7 +97,7 @@ class CatalogMigrationTest(unittest.TestCase):
                 """)
 
             for _ in range(2):
-                with TestClient(main.app) as client:
+                with patch.dict(os.environ, {'SMTP_HOST': ''}), TestClient(main.app) as client:
                     self.assertEqual(client.get('/api/demo/products').json(), {
                         'products': [{
                             'id': 31, 'name': 'Legacy Boot', 'category': 'Footwear',

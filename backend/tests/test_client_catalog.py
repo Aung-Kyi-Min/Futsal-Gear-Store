@@ -36,6 +36,7 @@ class ClientCatalogTest(unittest.TestCase):
             db.exec_driver_sql((root / '0003_staff_workspaces.sql').read_text())
             db.exec_driver_sql((root / '0004_discount_codes.sql').read_text())
             db.exec_driver_sql((root / '0004_payments.sql').read_text())
+            db.exec_driver_sql((root / '0005_email_delivery.sql').read_text())
         self.directory = tempfile.TemporaryDirectory()
         self.old_path = main.DB_PATH
         main.DB_PATH = Path(self.directory.name) / 'demo.db'
@@ -51,7 +52,8 @@ class ClientCatalogTest(unittest.TestCase):
         main.app.dependency_overrides[get_current_user] = lambda: self.user
         main.app.dependency_overrides[get_signing_secret] = lambda: 'x' * 40
         self.client = TestClient(main.app)
-        self.client.__enter__()
+        with patch.dict(os.environ, {'SMTP_HOST': ''}):
+            self.client.__enter__()
 
     def tearDown(self):
         self.client.__exit__(None, None, None)
