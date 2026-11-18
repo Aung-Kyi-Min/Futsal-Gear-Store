@@ -15,6 +15,7 @@ from .catalog import router as catalog_router
 from .customer_orders import router as customer_orders_router
 from .payment_email import payment_email_worker
 from .payments import router as payments_router
+from .reviews import router as reviews_router
 
 DB_PATH = Path(os.getenv("DATABASE_PATH", "store.db"))
 PRODUCTS = [
@@ -135,6 +136,7 @@ app.include_router(admin_router)
 app.include_router(catalog_router)
 app.include_router(customer_orders_router)
 app.include_router(payments_router)
+app.include_router(reviews_router)
 
 
 class OrderItem(BaseModel):

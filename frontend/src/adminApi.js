@@ -21,6 +21,7 @@ export async function loadManagerWorkspace(token, signal) {
     categories: request('/api/categories', { signal }),
     brands: request('/api/brands', { signal }),
     discounts: adminPages('discount-codes', token, signal),
+    reviews: adminPages('reviews', token, signal),
   };
   const results = await Promise.allSettled(Object.values(requests));
   const data = {};

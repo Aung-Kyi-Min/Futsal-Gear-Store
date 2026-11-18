@@ -506,6 +506,17 @@ footer small {
 }
 
 .mini-icon {
+    display: block;
+    width: 66px;
+    height: 66px;
+    flex: 0 0 66px;
+    object-fit: contain;
+    mix-blend-mode: multiply
+}
+
+span.mini-icon {
+    display: grid;
+    place-items: center;
     font-size: 35px
 }
 

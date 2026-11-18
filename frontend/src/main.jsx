@@ -39,11 +39,22 @@ function ProductDetailPage({ product, cart, change, money, onBack }) {
   const [variantId, setVariantId] = useState(initialVariant?.id || '');
   const [angle, setAngle] = useState(0);
   const [zoom, setZoom] = useState(1);
+  const [reviewData, setReviewData] = useState(null);
+  const [reviewsLoading, setReviewsLoading] = useState(true);
   const dragRef = useRef(null);
   const variant = product.variants.find(v => v.id === variantId) || initialVariant;
   const quantity = variant ? cart[variant.id] || 0 : 0;
   const stock = variant?.stock || 0;
   const hasAngleViews = Boolean(product.angle_image_url);
+  useEffect(() => {
+    let active = true;
+    setReviewsLoading(true);
+    request(`/api/products/${product.id}/reviews`, { cache: 'no-store' })
+      .then(data => { if (active) setReviewData(data); })
+      .catch(() => { if (active) setReviewData(null); })
+      .finally(() => { if (active) setReviewsLoading(false); });
+    return () => { active = false; };
+  }, [product.id]);
   const viewIndex = Math.floor(((((angle + 45) % 360) + 360) % 360) / 90);
   const viewPosition = [['0%', '0%'], ['100%', '0%'], ['0%', '100%'], ['100%', '100%']][viewIndex];
   const viewPositions = [['0% 0%', '100% 0%'], ['0% 100%', '100% 100%']].flat();
@@ -77,6 +88,12 @@ function ProductDetailPage({ product, cart, change, money, onBack }) {
         <button className="primary detail-add" disabled={!stock || quantity >= Math.min(stock, 99)} onClick={() => change(variant, 1)}>{!stock ? 'Sold out' : quantity >= Math.min(stock, 99) ? 'Bag limit reached' : 'Add to kit bag'} <span>＋</span></button>
         <div className="detail-assurance"><div><span>↗</span><p><strong>Made for indoor play</strong><small>Equipment picked for the futsal court.</small></p></div><div><span>◎</span><p><strong>Product details</strong><small>Check sizing and availability before adding to your bag.</small></p></div></div>
         <details className="detail-accordion" open><summary>Product description</summary><p>{product.description}</p><p>Brand: {product.brand}<br/>Category: {product.category}</p></details>
+        <section className="product-reviews" aria-labelledby="product-reviews-heading">
+          <div className="product-reviews-heading"><div><p className="eyebrow">PLAYER FEEDBACK</p><h2 id="product-reviews-heading">Customer reviews</h2></div>
+            {reviewData && <div className="product-rating-summary"><strong>{reviewData.average_rating == null ? '—' : reviewData.average_rating.toFixed(1)}</strong><span className="review-stars" aria-label={reviewData.average_rating == null ? 'No ratings yet' : `${reviewData.average_rating.toFixed(1)} out of 5 stars`}>{reviewData.average_rating == null ? '☆☆☆☆☆' : '★'.repeat(Math.round(reviewData.average_rating)) + '☆'.repeat(5 - Math.round(reviewData.average_rating))}</span><small>{reviewData.review_count} {reviewData.review_count === 1 ? 'review' : 'reviews'}</small></div>}
+          </div>
+          {reviewsLoading ? <p className="muted">Loading reviews…</p> : reviewData?.reviews.length ? <ul className="product-review-list">{reviewData.reviews.map(review => <li key={review.review_id}><div className="product-review-meta"><strong>{review.customer_name}</strong><span className="review-stars" aria-label={`${review.rating} out of 5 stars`}>{'★'.repeat(review.rating)}{'☆'.repeat(5 - review.rating)}</span></div><p>{review.review_text}</p><time dateTime={review.created_at}>{new Intl.DateTimeFormat('en-MY', { dateStyle: 'medium', timeZone: 'Asia/Kuala_Lumpur' }).format(new Date(review.created_at))}</time></li>)}</ul> : <p className="muted">No reviews yet. Delivered customers can share their experience from order details.</p>}
+        </section>
       </div>
     </div>
   </section>;
@@ -1163,7 +1180,7 @@ function App() {
                 <div className="cart-lines">
                   {lines.map((p) => (
                     <div className="cart-line" key={p.id}>
-                      <span className="mini-icon">{p.icon}</span>
+                      {p.image_url ? <img className="mini-icon" src={p.image_url} alt="" onError={event => { event.currentTarget.hidden = true; }}/> : <span className="mini-icon" aria-hidden="true">{p.icon}</span>}
                       <div>
                         <strong>{p.name}</strong>
                         <p>

@@ -62,6 +62,7 @@ class CustomerOrderDetail(OrderSummary):
     delivery_address: str
     items: list[OrderItem]
     status_history: list[OrderStatusEntry]
+    reviewed_product_ids: list[int]
 
 
 @router.get('', response_model=OrderPage)
@@ -105,7 +106,22 @@ def get_order(db: AuthDB, user: CurrentUser, response: Response, order_id: UUID)
         '''),
         {'order_id': order_id},
     ).mappings().all()
-    return {**order, 'items': order_items(db, order_id), 'status_history': history}
+    reviewed_product_ids = db.execute(
+        text('''
+            SELECT DISTINCT r.product_id
+            FROM product_reviews r
+            JOIN product_variants v ON v.product_id = r.product_id
+            JOIN order_items oi ON oi.variant_id = v.variant_id AND oi.order_id = :order_id
+            WHERE r.user_id = :customer_id
+        '''),
+        {'order_id': order_id, 'customer_id': user.user_id},
+    ).scalars().all()
+    return {
+        **order,
+        'items': order_items(db, order_id),
+        'status_history': history,
+        'reviewed_product_ids': reviewed_product_ids,
+    }
 
 
 def price_order(db: Connection, data: CheckoutRequest | QuoteRequest, *, lock_stock: bool):

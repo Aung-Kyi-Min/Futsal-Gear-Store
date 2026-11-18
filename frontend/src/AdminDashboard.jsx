@@ -8,15 +8,17 @@ import AdminManagement from './AdminManagement.jsx';
 const money = (minor, currency = 'MYR') => new Intl.NumberFormat('en-MY', { style: 'currency', currency }).format(minor / 100);
 const date = value => new Intl.DateTimeFormat('en-MY', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'Asia/Kuala_Lumpur' }).format(new Date(value));
 const nextStatus = { placed: 'processing', processing: 'shipped', shipped: 'delivered' };
-const emptyData = { products: [], orders: [], inventory: [], categories: [], brands: [], managers: [], activity: [], settings: null, discounts: [] };
-const sections = [['Overview', '◫'], ['Orders', '↗'], ['Products', '◇'], ['Inventory', '▤'], ['Discount codes', '%']];
+const emptyData = { products: [], orders: [], inventory: [], categories: [], brands: [], managers: [], activity: [], settings: null, discounts: [], reviews: [] };
+const sections = [['Overview', '◫'], ['Orders', '↗'], ['Products', '◇'], ['Inventory', '▤'], ['Discount codes', '%'], ['Reviews', '☆']];
 const resourcesBySection = {
   Orders: ['orders'], Products: ['products', 'categories', 'brands'],
   Inventory: ['inventory'], 'Discount codes': ['discounts'],
+  Reviews: ['reviews'],
 };
 const resourceLabels = {
   products: 'products', orders: 'orders', inventory: 'inventory',
   categories: 'categories', brands: 'brands', discounts: 'discount codes',
+  reviews: 'reviews',
 };
 
 export default function AdminDashboard({ user, token, sessionLoading = false, onLogin, onLogout, onExit }) {
@@ -156,6 +158,9 @@ export default function AdminDashboard({ user, token, sessionLoading = false, on
   function advance(order) {
     const status = nextStatus[order.status];
     if (status) mutate(`orders/${order.order_id}/status`, 'PATCH', { status }, `Order marked ${status}.`);
+  }
+  function setReviewHidden(review, isHidden) {
+    mutate(`reviews/${review.review_id}`, 'PATCH', { is_hidden: isHidden }, isHidden ? 'Review hidden from customers.' : 'Review visible to customers.');
   }
   function exportReport() {
     const url = URL.createObjectURL(new Blob([ordersCsv(data.orders)], { type: 'text/csv;charset=utf-8' }));
@@ -487,7 +492,7 @@ export default function AdminDashboard({ user, token, sessionLoading = false, on
               />
             </section>
           )}
-          {!isAdmin && currentSection === "Discount codes" && !failedResources.includes('discounts') && (
+          {!isAdmin && currentSection === "Discount codes" && (
             <section className="panel table-panel">
               <PanelHeader
                 title="Discount codes"
@@ -498,7 +503,7 @@ export default function AdminDashboard({ user, token, sessionLoading = false, on
                   setModal({ kind: "discount-form" });
                 }}
               />
-              {discountError && <p className="admin-error" role="alert">Discount codes are unavailable: {discountError}. If this database was set up in pgAdmin, run <code>backend/migrations/sql/0004_discount_codes.sql</code> against the same database, then refresh.</p>}
+              {failedResources.includes('discounts') && <p className="admin-error" role="alert">Discount codes could not be loaded. If this database was set up in pgAdmin, run <code>backend/migrations/sql/0004_discount_codes.sql</code> against the same database, then refresh.</p>}
               <div className="admin-table-wrap">
                 <table>
                   <thead><tr><th>Code</th><th>Discount</th><th>Expiry date</th></tr></thead>
@@ -513,7 +518,30 @@ export default function AdminDashboard({ user, token, sessionLoading = false, on
                   </tbody>
                 </table>
               </div>
-              {!loading && !discountError && !data.discounts.length && <p>No discount codes yet.</p>}
+              {!loading && !failedResources.includes('discounts') && !data.discounts.length && <p>No discount codes yet.</p>}
+            </section>
+          )}
+          {!isAdmin && currentSection === "Reviews" && (
+            <section className="panel table-panel">
+              <PanelHeader title="Customer reviews" subtitle={`${data.reviews.length} reviews · hidden reviews are not shown on product pages`} />
+              <div className="admin-table-wrap">
+                <table className="admin-live-table">
+                  <thead><tr><th>Product</th><th>Customer</th><th>Rating</th><th>Review</th><th>Visibility</th><th>Manage</th></tr></thead>
+                  <tbody>
+                    {data.reviews.map((review) => (
+                      <tr key={review.review_id}>
+                        <td>{review.product_name}</td>
+                        <td>{review.customer_name}</td>
+                        <td><span aria-label={`${review.rating} out of 5 stars`}>{'★'.repeat(review.rating)}{'☆'.repeat(5 - review.rating)}</span></td>
+                        <td className="admin-review-copy">{review.review_text}</td>
+                        <td>{review.is_hidden ? 'Hidden' : 'Visible'}</td>
+                        <td><button disabled={disabled} onClick={() => setReviewHidden(review, !review.is_hidden)}>{review.is_hidden ? 'Show review' : 'Hide review'}</button></td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                {!loading && !data.reviews.length && <Empty />}
+              </div>
             </section>
           )}
           {isAdmin && (

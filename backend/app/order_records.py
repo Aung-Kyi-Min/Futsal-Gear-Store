@@ -34,6 +34,7 @@ class OrderSummary(BaseModel):
 
 class OrderItem(BaseModel):
     order_item_id: int
+    product_id: int
     variant_id: int
     product_name_snapshot: str
     size_snapshot: str
@@ -60,9 +61,11 @@ class OrderPage(BaseModel):
 def order_items(db: Connection, order_id: UUID):
     return db.execute(
         text("""
-            SELECT order_item_id, variant_id, product_name_snapshot, size_snapshot, colour_snapshot,
-                   quantity, unit_price_minor, line_total_minor
-            FROM order_items WHERE order_id = :order_id ORDER BY order_item_id
+            SELECT oi.order_item_id, v.product_id, oi.variant_id, oi.product_name_snapshot,
+                   oi.size_snapshot, oi.colour_snapshot, oi.quantity, oi.unit_price_minor,
+                   oi.line_total_minor
+            FROM order_items oi JOIN product_variants v ON v.variant_id = oi.variant_id
+            WHERE oi.order_id = :order_id ORDER BY oi.order_item_id
         """),
         {"order_id": order_id},
     ).mappings().all()

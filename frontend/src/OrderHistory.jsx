@@ -21,6 +21,46 @@ function Status({ status }) {
   return <span className={`order-status order-status--${status}`}>{STATUS_LABELS[status]}</span>;
 }
 
+function ReviewForm({ product, orderId, token, alreadyReviewed }) {
+  const [rating, setRating] = useState(5);
+  const [reviewText, setReviewText] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const [submitted, setSubmitted] = useState(false);
+  const [error, setError] = useState('');
+
+  async function submit(event) {
+    event.preventDefault();
+    if (submitting || submitted) return;
+    setSubmitting(true);
+    setError('');
+    try {
+      await request(`/api/customer/orders/${orderId}/reviews`, {
+        token,
+        method: 'POST',
+        body: { product_id: product.product_id, rating, review_text: reviewText },
+      });
+      setSubmitted(true);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  if (alreadyReviewed || submitted) return <p className="review-submitted" role="status">✓ Review submitted successfully</p>;
+  return (
+    <form className="order-review-form" onSubmit={submit}>
+      <strong>Rate this product</strong>
+      <div className="review-star-picker" role="group" aria-label={`Rating for ${product.product_name_snapshot}`}>
+        {[1, 2, 3, 4, 5].map(value => <button key={value} type="button" className={value <= rating ? 'selected' : ''} aria-label={`${value} star${value === 1 ? '' : 's'}`} aria-pressed={rating === value} onClick={() => setRating(value)}>★</button>)}
+      </div>
+      <label>Short review<textarea required minLength={3} maxLength={500} value={reviewText} onChange={event => setReviewText(event.target.value)} /></label>
+      <div className="review-form-footer"><small>{reviewText.length}/500 · at least 3 characters</small><button className="account-button" disabled={submitting || reviewText.trim().length < 3}>{submitting ? 'Submitting…' : 'Submit review'}</button></div>
+      {error && <p className="review-form-error" role="alert">{error}</p>}
+    </form>
+  );
+}
+
 function OrderList({ data, formatMoney, onOpenOrder, onShop, onPage }) {
   if (!data.total) {
     return (
@@ -116,6 +156,15 @@ function OrderDetails({ order, formatMoney, token }) {
               </li>
             ))}
           </ul>
+          {order.status === 'delivered' && <section className="order-reviews" aria-label="Review purchased products">
+            <h3>Share your feedback</h3>
+            {[...new Map(order.items.map(item => [item.product_id, item])).values()].map(item => (
+              <div className="order-review-product" key={item.product_id}>
+                <strong>{item.product_name_snapshot}</strong>
+                <ReviewForm product={item} orderId={order.order_id} token={token} alreadyReviewed={order.reviewed_product_ids?.includes(item.product_id)} />
+              </div>
+            ))}
+          </section>}
           <dl className="order-totals">
             <div><dt>Subtotal</dt><dd>{money(order.subtotal_minor)}</dd></div>
             {order.discount_code && (
