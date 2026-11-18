@@ -1,17 +1,5 @@
 import { request } from './api.js';
-
-const sampleImages = {
-  'Lunar Gato II': '/images/futsal-shoes-black.jpg',
-  'Top Sala Competition': '/images/futsal-shoes-blue.jpg',
-  'Monarcida Neo Sala Club IN': '/images/futsal-shoes-bluewhite.jpg',
-  'Combi Training Jersey': '/images/training-jersey-red.jpg',
-  'Team Training Shorts': '/images/training-shorts-black.jpg',
-  'Milano Team Socks': '/images/team-socks-black.jpg',
-  'F9G Futsal Ball': '/images/futsal-ball-bluewhite.jpg',
-  'Futsal Goalkeeper Gloves': '/images/goalkeeper-gloves-black-orange.jpg',
-  'Academy Team Duffel': '/images/team-duffel-black.jpg',
-  'Training Marker Cones - 10 Pack': '/images/training-cones-orange.jpg',
-};
+import sampleImages from './productImages.json' with { type: 'json' };
 
 const sampleAngleImages = {
   'Lunar Gato II': '/images/futsal-shoes-black-views.jpg',

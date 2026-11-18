@@ -13,6 +13,7 @@ from fastapi import APIRouter, Header, HTTPException, Request
 from sqlalchemy import text
 
 from .auth import AuthDB, CurrentUser
+from .order_receipt import receipt_snapshot
 
 router = APIRouter(prefix='/api/payments', tags=['Payments'])
 
@@ -167,8 +168,7 @@ def apply_event(db, event):
             FROM users WHERE user_id=:customer
             ON CONFLICT (order_id, kind) DO NOTHING
         '''), {'id': order['order_id'], 'customer': order['customer_id'],
-               'payload': json.dumps({'order_id': str(order['order_id']),
-                                      'total_minor': order['total_minor'], 'currency': order['currency']})})
+               'payload': json.dumps(receipt_snapshot(db, order['order_id']))})
     db.commit()
 
 

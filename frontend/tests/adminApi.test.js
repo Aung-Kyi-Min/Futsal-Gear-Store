@@ -1,6 +1,6 @@
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { adminPages, minorUnits, ordersCsv, productPayload, stockPayload, variantPayload } from '../src/adminApi.js';
+import { adminPages, loadManagerWorkspace, minorUnits, ordersCsv, productPayload, stockPayload, variantPayload } from '../src/adminApi.js';
 const originalFetch = globalThis.fetch;
 afterEach(() => { globalThis.fetch = originalFetch; });
 
@@ -13,6 +13,20 @@ test('admin list requests send bearer tokens and load every page', async () => {
     return Response.json({ inventory: [{ variant_id: page }], total: 2 });
   };
   assert.deepEqual(await adminPages('inventory', 'staff-token'), [{ variant_id: 1 }, { variant_id: 2 }]);
+});
+
+test('a failed orders request does not hide products in the manager workspace', async () => {
+  globalThis.fetch = async (url) => {
+    const resource = url.split('?')[0].split('/').at(-1);
+    if (resource === 'orders') return new Response('Internal Server Error', { status: 500 });
+    if (resource === 'products') return Response.json({ products: [{ product_id: 1 }], total: 1 });
+    if (resource === 'categories' || resource === 'brands') return Response.json([]);
+    return Response.json({ [resource.replaceAll('-', '_')]: [], total: 0 });
+  };
+  const result = await loadManagerWorkspace('staff-token');
+  assert.deepEqual(result.data.products, [{ product_id: 1 }]);
+  assert.deepEqual(result.failed, ['orders']);
+  assert.equal(result.data.orders, undefined);
 });
 
 test('prices convert exactly to minor units and reject fractional cents', () => {

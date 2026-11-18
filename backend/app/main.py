@@ -13,6 +13,7 @@ from .admin import router as admin_router
 from .auth import router as auth_router
 from .catalog import router as catalog_router
 from .customer_orders import router as customer_orders_router
+from .payment_email import payment_email_worker
 from .payments import router as payments_router
 
 DB_PATH = Path(os.getenv("DATABASE_PATH", "store.db"))
@@ -119,7 +120,8 @@ def init_db():
 @asynccontextmanager
 async def lifespan(app):
     init_db()
-    yield
+    async with payment_email_worker():
+        yield
 
 
 app = FastAPI(title="Futsal Gear Store API", version="1.0.0", lifespan=lifespan)

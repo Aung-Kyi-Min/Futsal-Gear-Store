@@ -254,12 +254,35 @@ Customer checkout saves an order with `payment_status=UNPAID`, then opens Stripe
 
 1. Install backend requirements and run `cd backend && .venv/bin/alembic upgrade head` to add payment fields, event deduplication, and the email outbox. If your existing database was initialized using the SQL scripts without Alembic tracking, apply only `backend/migrations/sql/0004_payments.sql` with your PostgreSQL client instead; do not recreate the existing schema.
 2. In `backend/.env`, set `STRIPE_SECRET_KEY=sk_test_...`, `STRIPE_WEBHOOK_SECRET=whsec_...`, and `CHECKOUT_ORIGIN=http://localhost:5173` (use your storefront origin when hosted). Keys stay on the backend; live keys and live webhook events are rejected.
-3. Run the backend and frontend as usual. Run `stripe listen --forward-to localhost:8000/api/payments/webhook` and copy its signing secret into `STRIPE_WEBHOOK_SECRET`, then restart the backend. For a hosted endpoint, register `/api/payments/webhook` in Stripe's test dashboard with `checkout.session.completed` and `checkout.session.async_payment_succeeded` and use that endpoint's signing secret.
+3. Install the [Stripe CLI](https://docs.stripe.com/cli/install) separately from Python. On macOS with Homebrew, run `brew install stripe`. Start the backend and frontend, then run this from the project root in a separate terminal:
+
+   ```sh
+   backend/.venv/bin/python backend/scripts/listen_stripe.py
+   ```
+
+   The script uses the app's test API key so the listener and checkout use the same Stripe account. Keep the listener running, copy its signing secret into `STRIPE_WEBHOOK_SECRET`, and restart the backend. For a hosted endpoint, register `/api/payments/webhook` in Stripe's test dashboard for `checkout.session.completed` and `checkout.session.async_payment_succeeded` and use that endpoint's signing secret.
 4. Place an order, complete Checkout using test card `4242 4242 4242 4242`, any future expiry, and any three-digit CVC. Open or refresh order details to see `PAID`. Cancelled checkout and provider failures leave the order unpaid; use **Pay with Stripe (test)** in order details to resume. Expired sessions are replaced when retrying payment.
 
 `POST /api/payments/orders/{order_id}/checkout` requires the owning customer's token and uses server-stored totals. Its provider idempotency key and order lock prevent concurrent retries from creating duplicate sessions. `POST /api/payments/webhook` verifies the raw-body HMAC and a five-minute timestamp tolerance, then checks the registered session, reference, amount, currency, test mode, and paid state.
 
-The paid transition, event record, and `email_outbox` entry commit together. A unique `(order_id, kind)` constraint ensures one queued `payment_confirmation` even for concurrent deliveries or different events about the same payment. The outbox stores recipient and order totals. Email transport/worker delivery is not configured in this app; queued messages remain durable for a worker to consume. Do not send email directly inside the webhook. A future worker should use the outbox ID as its mail provider's idempotency key before recording `sent_at`.
+The paid transition, event record, and payment confirmation email commit together in PostgreSQL. The FastAPI worker delivers queued confirmations to the customer's account email after Stripe verifies payment. The email includes product photos, saved product names, size/colour, quantity, unit prices, item totals, discounts, shipping, tax, delivery details, and the amount paid. Storefront photos under `frontend/public/images` are embedded in the email. Products with public HTTPS image URLs use those URLs. A plain-text alternative includes the same purchase details. Failed delivery attempts stay queued and retry after increasing delays, up to one hour between attempts. The worker records `sent_at` once the SMTP relay accepts the message. SMTP can resend an email if the relay accepts it just before the worker loses its database connection.
+
+#### Enable payment confirmation email
+
+Run `.venv/bin/alembic upgrade head` from `backend/`. If you manage the schema in pgAdmin, run `backend/migrations/sql/0005_email_delivery.sql` once after the payment migration.
+
+Set your SMTP provider's host, credentials, and verified sender address in `backend/.env`, then restart FastAPI:
+
+```dotenv
+SMTP_HOST=smtp.example.com
+SMTP_PORT=587
+SMTP_SECURITY=starttls
+SMTP_FROM_EMAIL=orders@example.com
+SMTP_USERNAME=
+SMTP_PASSWORD=
+```
+
+Use `SMTP_SECURITY=ssl` for a provider that uses implicit TLS. For local testing, point to an SMTP capture server at `127.0.0.1` with `SMTP_PORT=1025` and `SMTP_SECURITY=none`. Leave `SMTP_HOST` blank to pause delivery. Enabling the worker processes any existing unsent confirmations as well as new ones. Keep `stripe listen` running during local checkout so FastAPI can verify the payment and queue the email.
 
 Stock is deducted when the order is placed, as before. Unpaid/cancelled/expired checkouts retain their stock allocation; automatic abandoned-order stock release is not part of this payment flow. The legacy SQLite demo endpoint `/api/orders` remains a separate demo and does not collect payments.
 

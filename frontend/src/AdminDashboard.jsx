@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { request } from './api.js';
-import { adminPages, ordersCsv, productPayload, stockPayload, variantPayload } from './adminApi.js';
+import { loadManagerWorkspace, ordersCsv, productPayload, stockPayload, variantPayload } from './adminApi.js';
 import './admin.css';
 import PaymentStatus from './PaymentStatus.jsx';
 import AdminManagement from './AdminManagement.jsx';
@@ -10,6 +10,14 @@ const date = value => new Intl.DateTimeFormat('en-MY', { dateStyle: 'medium', ti
 const nextStatus = { placed: 'processing', processing: 'shipped', shipped: 'delivered' };
 const emptyData = { products: [], orders: [], inventory: [], categories: [], brands: [], managers: [], activity: [], settings: null, discounts: [] };
 const sections = [['Overview', '◫'], ['Orders', '↗'], ['Products', '◇'], ['Inventory', '▤'], ['Discount codes', '%']];
+const resourcesBySection = {
+  Orders: ['orders'], Products: ['products', 'categories', 'brands'],
+  Inventory: ['inventory'], 'Discount codes': ['discounts'],
+};
+const resourceLabels = {
+  products: 'products', orders: 'orders', inventory: 'inventory',
+  categories: 'categories', brands: 'brands', discounts: 'discount codes',
+};
 
 export default function AdminDashboard({ user, token, sessionLoading = false, onLogin, onLogout, onExit }) {
   const [section, setSection] = useState('Overview');
@@ -23,6 +31,7 @@ export default function AdminDashboard({ user, token, sessionLoading = false, on
   const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const [failedResources, setFailedResources] = useState([]);
   const [notice, setNotice] = useState('');
   const [modal, setModal] = useState(null);
   const [modalError, setModalError] = useState('');
@@ -41,7 +50,7 @@ export default function AdminDashboard({ user, token, sessionLoading = false, on
     controller.current?.abort();
     controller.current = new AbortController();
     const signal = controller.current.signal;
-    setLoading(true); setError('');
+    setLoading(true); setError(''); setFailedResources([]);
     try {
       if (isAdmin) {
         const [managers, activity, settings] = await Promise.all([
@@ -52,12 +61,11 @@ export default function AdminDashboard({ user, token, sessionLoading = false, on
         if (version === generation.current) setData({ ...emptyData, managers, activity, settings });
         return;
       }
-      const [products, orders, inventory, categories, brands, discounts] = await Promise.all([
-        adminPages('products', token, signal), adminPages('orders', token, signal),
-        adminPages('inventory', token, signal), request('/api/categories', { signal }), request('/api/brands', { signal }),
-        adminPages('discount-codes', token, signal),
-      ]);
-      if (version === generation.current) setData({ ...emptyData, products, orders, inventory, categories, brands, discounts });
+      const { data: loaded, failed } = await loadManagerWorkspace(token, signal);
+      if (version === generation.current) {
+        setData({ ...emptyData, ...loaded });
+        setFailedResources(failed);
+      }
     } catch (err) {
       if (version !== generation.current) return;
       if (err.status === 401) { logoutRef.current(); return; }
@@ -151,7 +159,11 @@ export default function AdminDashboard({ user, token, sessionLoading = false, on
     <p className="staff-demo-note">Manager or administrator access is required.</p></section><div className="staff-login-art"><span>YOUR STORE.<br/>IN PLAY.</span><b>⚽</b></div></div>;
   if (!staff) return <div className="staff-login-page"><section className="staff-login-card"><h1>Staff access required.</h1><p>Your account cannot access this dashboard.</p><button className="staff-login-submit" onClick={onLogout}>Log out</button><button onClick={onExit}>Return to storefront</button></section></div>;
 
-  const disabled = loading || busy || detailLoading || !!error;
+  const disabled = loading || busy || detailLoading || !!error
+    || resourcesBySection[currentSection]?.some((resource) => failedResources.includes(resource));
+  const ordersUnavailable = failedResources.includes('orders');
+  const inventoryUnavailable = failedResources.includes('inventory');
+  const productsUnavailable = failedResources.includes('products');
   const matches = (...values) => values.join(' ').toLowerCase().includes(search.toLowerCase());
   const products = data.products.filter(p => matches(p.name, p.category, p.brand, p.product_id));
   const orders = data.orders.filter(o => matches(o.order_id, o.delivery_name, o.status) && (!status || o.status === status));
@@ -247,6 +259,12 @@ export default function AdminDashboard({ user, token, sessionLoading = false, on
               </button>
             </p>
           )}
+          {!!failedResources.length && (
+            <p className="admin-error" role="alert">
+              Could not load {failedResources.map((resource) => resourceLabels[resource]).join(", ")}.{" "}
+              <button onClick={reload} disabled={loading || busy}>Reload data</button>
+            </p>
+          )}
           {notice && (
             <p className="admin-notice" role="status">
               {notice}
@@ -272,21 +290,21 @@ export default function AdminDashboard({ user, token, sessionLoading = false, on
                 />
                 <Metric
                   label="Orders"
-                  value={data.orders.length}
-                  detail={`${data.orders.filter((o) => o.status !== "delivered").length} awaiting delivery`}
+                  value={ordersUnavailable ? "—" : data.orders.length}
+                  detail={ordersUnavailable ? "Orders unavailable" : `${data.orders.filter((o) => o.status !== "delivered").length} awaiting delivery`}
                 />
                 <Metric
                   label="Products"
-                  value={data.products.length}
-                  detail={`${data.products.filter((p) => p.is_active).length} active products`}
+                  value={productsUnavailable ? "—" : data.products.length}
+                  detail={productsUnavailable ? "Products unavailable" : `${data.products.filter((p) => p.is_active).length} active products`}
                 />
                 <Metric
                   label="Low / no stock"
-                  value={lowStock.length}
+                  value={inventoryUnavailable ? "—" : lowStock.length}
                   detail="Active variants with 5 or fewer units"
                 />
               </div>
-              <section className="panel table-panel">
+              {!ordersUnavailable && <section className="panel table-panel">
                 <PanelHeader
                   title="Recent orders"
                   action="View orders →"
@@ -298,8 +316,8 @@ export default function AdminDashboard({ user, token, sessionLoading = false, on
                   onDetail={(o) => openDetail("orders", o.order_id)}
                   onAdvance={advance}
                 />
-              </section>
-              <section className="panel table-panel">
+              </section>}
+              {!inventoryUnavailable && <section className="panel table-panel">
                 <PanelHeader
                   title="Stock to watch"
                   action="View inventory →"
@@ -314,10 +332,10 @@ export default function AdminDashboard({ user, token, sessionLoading = false, on
                   }}
                   onHistory={(row) => openDetail("movements", row.variant_id)}
                 />
-              </section>
+              </section>}
             </>
           )}
-          {!isAdmin && currentSection === "Orders" && (
+          {!isAdmin && currentSection === "Orders" && !ordersUnavailable && (
             <section className="panel table-panel">
               <PanelHeader
                 title="All orders"
@@ -350,7 +368,7 @@ export default function AdminDashboard({ user, token, sessionLoading = false, on
               />
             </section>
           )}
-          {!isAdmin && currentSection === "Products" && (
+          {!isAdmin && currentSection === "Products" && !productsUnavailable && (
             <section className="panel table-panel">
               <PanelHeader
                 title="Product catalog"
@@ -433,7 +451,7 @@ export default function AdminDashboard({ user, token, sessionLoading = false, on
               </div>
             </section>
           )}
-          {!isAdmin && currentSection === "Inventory" && (
+          {!isAdmin && currentSection === "Inventory" && !inventoryUnavailable && (
             <section className="panel table-panel">
               <PanelHeader
                 title="Variant inventory"
@@ -455,7 +473,7 @@ export default function AdminDashboard({ user, token, sessionLoading = false, on
               />
             </section>
           )}
-          {!isAdmin && currentSection === "Discount codes" && (
+          {!isAdmin && currentSection === "Discount codes" && !failedResources.includes('discounts') && (
             <section className="panel table-panel">
               <PanelHeader
                 title="Discount codes"
